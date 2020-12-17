@@ -480,7 +480,6 @@ void trace_shader_core_ctx::init_traces(unsigned start_warp, unsigned end_warp,
   trace_kernel_info_t &trace_kernel =
       static_cast<trace_kernel_info_t &>(kernel);
   trace_kernel.get_next_threadblock_traces(threadblock_traces);
-
   // set the pc from the traces and ignore the functional model
   for (unsigned i = start_warp; i < end_warp; ++i) {
     trace_shd_warp_t *m_trace_warp = static_cast<trace_shd_warp_t *>(m_warp[i]);

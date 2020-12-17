@@ -113,6 +113,7 @@ public:
   virtual address_type get_pc();
   trace_warp_inst_t *set_kernel(trace_kernel_info_t *kernel_info) {
     m_kernel_info = kernel_info;
+    return nullptr;
   }
 
 private:

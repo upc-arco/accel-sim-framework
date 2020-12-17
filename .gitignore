@@ -1,5 +1,5 @@
 env-setup/
-gpu-app-collection/
 hw_run/
 sim_run_*
 *.DS_Store*
+gpucomputingsdk_4.2.9_linux.run
