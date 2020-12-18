@@ -162,6 +162,7 @@ bool inst_trace_t::parse_from_string(std::string trace,
 
   ss >> reg_srcs_num;
   assert(reg_srcs_num <= MAX_SRC);
+  
   for (unsigned i = 0; i < reg_srcs_num; ++i) {
     ss >> temp;
     sscanf(temp.c_str(), "R%d", &reg_src[i]);

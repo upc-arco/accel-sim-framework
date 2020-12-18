@@ -916,6 +916,8 @@ class inst_t {
       arch_reg.src[i] = -1;
       arch_reg.dst[i] = -1;
     }
+    num_sass_src_ops = 0;
+    num_sass_dst_ops = 0;
     isize = 0;
   }
   bool valid() const { return m_decoded; }
@@ -973,6 +975,8 @@ class inst_t {
     int dst[MAX_REG_OPERANDS];
     int src[MAX_REG_OPERANDS];
   } arch_reg;
+  unsigned num_sass_src_ops;
+  unsigned num_sass_dst_ops;
   // int arch_reg[MAX_REG_OPERANDS]; // register number for bank conflict
   // evaluation
   unsigned latency;  // operation latency

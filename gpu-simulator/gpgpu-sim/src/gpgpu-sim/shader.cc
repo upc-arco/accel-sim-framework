@@ -582,11 +582,40 @@ float shader_core_ctx::get_current_occupancy(unsigned long long &active,
 void shader_core_stats::print(FILE *fout) const {
   unsigned long long thread_icount_uarch = 0;
   unsigned long long warp_icount_uarch = 0;
+  unsigned long long total_num_sass_writes = 0;
+  unsigned long long total_num_sass_reads = 0;
+  unsigned long long total_num_opreg_writes = 0;
+  unsigned long long total_num_opreg_reads = 0;
+  unsigned long long total_gpgpusim_rf_writes = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts_ALU = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts_LDST = 0;
+  unsigned long long total_winsts_with_rf_write = 0;
 
   for (unsigned i = 0; i < m_config->num_shader(); i++) {
     thread_icount_uarch += m_num_sim_insn[i];
     warp_icount_uarch += m_num_sim_winsn[i];
+    total_num_sass_writes += m_sass_write_regfile_acesses[i];
+    total_num_sass_reads += m_sass_read_regfile_acesses[i];
+    total_num_opreg_reads += m_read_regfile_acesses[i] / m_config->warp_size;
+    total_num_opreg_writes += m_opwrite_regfile_accesses[i];
+    total_gpgpusim_rf_writes += m_write_regfile_acesses[i] / m_config->warp_size;
+    total_gpgpusim_rf_write_conflicts += m_tot_regfile_acesses_conflicts[i];
+    total_gpgpusim_rf_write_conflicts_ALU += m_tot_regfile_acesses_conflicts_ALU[i];
+    total_gpgpusim_rf_write_conflicts_LDST += m_tot_regfile_acesses_conflicts_LDST[i];
+    total_winsts_with_rf_write += m_winsts_with_rf_write[i];
   }
+
+  fprintf(fout, "gpgpu_n_tot_sass_writes = %lld\n", total_num_sass_writes);
+  fprintf(fout, "gpgpu_n_tot_sass_reads = %lld\n", total_num_sass_reads);
+  fprintf(fout, "gpgpu_n_tot_opreg_reads = %lld\n", total_num_opreg_reads);
+  fprintf(fout, "gpgpu_n_tot_opreg_writes = %lld\n", total_num_opreg_writes);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_writes = %lld\n", total_gpgpusim_rf_writes);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts = %lld\n", total_gpgpusim_rf_write_conflicts);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts_ALU = %lld\n", total_gpgpusim_rf_write_conflicts_ALU);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts_LDST = %lld\n", total_gpgpusim_rf_write_conflicts_LDST);
+  fprintf(fout, "gpgpu_n_tot_winsts_with_rf_write = %lld\n", total_winsts_with_rf_write);
+
   fprintf(fout, "gpgpu_n_tot_thrd_icount = %lld\n", thread_icount_uarch);
   fprintf(fout, "gpgpu_n_tot_w_icount = %lld\n", warp_icount_uarch);
 
@@ -1732,6 +1761,10 @@ void shader_core_ctx::warp_inst_complete(const warp_inst_t &inst) {
   m_stats->m_num_sim_winsn[m_sid]++;
   m_gpu->gpu_sim_insn += inst.active_count();
   inst.completed(m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
+
+  // count sass level source operand reads and destination writes
+  incregfile_sass_writes(inst);
+  incregfile_sass_reads(inst.num_sass_src_ops);
 }
 
 void shader_core_ctx::writeback() {
@@ -1766,7 +1799,8 @@ void shader_core_ctx::writeback() {
      * no stalling).
      */
 
-    m_operand_collector.writeback(*pipe_reg);
+    if(!m_operand_collector.writeback(*pipe_reg))
+      incregfile_write_conflict_ALU();
     unsigned warp_id = pipe_reg->warp_id();
     m_scoreboard->releaseRegisters(pipe_reg);
     m_warp[warp_id]->dec_inst_in_pipeline();
@@ -2449,6 +2483,8 @@ void ldst_unit::writeback() {
       m_next_wb.clear();
       m_last_inst_gpu_sim_cycle = m_core->get_gpu()->gpu_sim_cycle;
       m_last_inst_gpu_tot_sim_cycle = m_core->get_gpu()->gpu_tot_sim_cycle;
+    } else {
+      m_core->incregfile_write_conflict_LDST();
     }
   }
 
@@ -3896,6 +3932,7 @@ int register_bank(int regnum, int wid, unsigned num_banks,
 bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
   assert(!inst.empty());
   std::list<unsigned> regs = m_shader->get_regs_written(inst);
+  assert(regs.size()<=1);
   for (unsigned op = 0; op < MAX_REG_OPERANDS; op++) {
     int reg_num = inst.arch_reg.dst[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
@@ -3909,7 +3946,9 @@ bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
         inst.arch_reg.dst[op] = -1;
+        m_shader->incregfile_opwrites();
       } else {
+        m_shader->incregfile_write_conflict();
         return false;
       }
     }

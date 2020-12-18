@@ -1639,6 +1639,14 @@ struct shader_core_stats_pod {
   unsigned *m_num_mem_committed;
   unsigned *m_read_regfile_acesses;
   unsigned *m_write_regfile_acesses;
+  unsigned *m_sass_write_regfile_acesses;
+  unsigned *m_winsts_with_rf_write;
+  unsigned *m_tot_regfile_acesses_conflicts;
+  unsigned *m_tot_regfile_acesses_conflicts_LDST;
+  unsigned *m_tot_regfile_acesses_conflicts_ALU;
+
+  unsigned *m_sass_read_regfile_acesses;
+  unsigned *m_opwrite_regfile_accesses;
   unsigned *m_non_rf_operands;
   unsigned *m_num_imul24_acesses;
   unsigned *m_num_imul32_acesses;
@@ -1770,6 +1778,21 @@ class shader_core_stats : public shader_core_stats_pod {
     m_read_regfile_acesses =
         (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
     m_write_regfile_acesses =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_opwrite_regfile_accesses =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_sass_write_regfile_acesses =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_winsts_with_rf_write =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_tot_regfile_acesses_conflicts_LDST =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_tot_regfile_acesses_conflicts_ALU =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_tot_regfile_acesses_conflicts =
+        (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+
+    m_sass_read_regfile_acesses =
         (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
     m_non_rf_operands =
         (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
@@ -2082,6 +2105,27 @@ class shader_core_ctx : public core_t {
   void incregfile_writes(unsigned active_count) {
     m_stats->m_write_regfile_acesses[m_sid] =
         m_stats->m_write_regfile_acesses[m_sid] + active_count;
+  }
+  void incregfile_sass_writes(const warp_inst_t &inst) {
+    if(unsigned num_dst = inst.num_sass_dst_ops) {
+      ++m_stats->m_winsts_with_rf_write[m_sid];
+      m_stats->m_sass_write_regfile_acesses[m_sid] += num_dst;
+    }  
+  }
+  void incregfile_write_conflict(){
+    ++m_stats->m_tot_regfile_acesses_conflicts[m_sid];
+  }
+  void incregfile_write_conflict_ALU(){
+    ++m_stats->m_tot_regfile_acesses_conflicts_ALU[m_sid];
+  }
+  void incregfile_write_conflict_LDST(){
+    ++m_stats->m_tot_regfile_acesses_conflicts_LDST[m_sid];
+  }
+  void incregfile_sass_reads(unsigned count) {
+    m_stats->m_sass_read_regfile_acesses[m_sid] += count;
+  }
+  void incregfile_opwrites() {
+    m_stats->m_opwrite_regfile_accesses[m_sid] += 1;
   }
   void incnon_rf_operands(unsigned active_count) {
     m_stats->m_non_rf_operands[m_sid] =

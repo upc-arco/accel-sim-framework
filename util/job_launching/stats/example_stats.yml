@@ -8,6 +8,15 @@
 # These stats are continuously aggregated - even between kerenels and should
 # be diff'd to get the per-kernel stats
 collect_aggregate:
+    - 'gpgpu_n_tot_opreg_writes\s*=\s*(.*)'
+    - 'gpgpu_n_tot_opreg_reads\s*=\s*(.*)'
+    - 'gpgpu_n_tot_sass_reads\s*=\s*(.*)'
+    - 'gpgpu_n_tot_sass_writes\s*=\s*(.*)'
+    - 'gpgpu_n_tot_gpgpusim_rf_writes\s*=\s*(.*)'
+    - 'gpgpu_n_tot_gpgpusim_rf_write_conflicts\s*=\s*(.*)'
+    - 'gpgpu_n_tot_gpgpusim_rf_write_conflicts_ALU\s*=\s*(.*)'
+    - 'gpgpu_n_tot_gpgpusim_rf_write_conflicts_LDST\s*=\s*(.*)'
+    - 'gpgpu_n_tot_winsts_with_rf_write\s*=\s*(.*)'
     - 'gpu_tot_sim_insn\s*=\s*(.*)'
     - 'gpgpu_simulation_time\s*=.*\(([0-9]+) sec\).*'
     - 'gpu_tot_sim_cycle\s*=\s*(.*)'

@@ -150,6 +150,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
   num_regs = trace.reg_srcs_num + trace.reg_dsts_num;
   num_operands = num_regs;
   outcount = trace.reg_dsts_num;
+  num_sass_dst_ops = trace.reg_dsts_num;
   for (unsigned m = 0; m < trace.reg_dsts_num; ++m) {
     out[m] = trace.reg_dest[m] + 1; // Increment by one because GPGPU-sim starts
                                     // from R1, while SASS starts from R0
@@ -157,6 +158,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
   }
 
   incount = trace.reg_srcs_num;
+  num_sass_src_ops = trace.reg_srcs_num;
   for (unsigned m = 0; m < trace.reg_srcs_num; ++m) {
     in[m] = trace.reg_src[m] + 1; // Increment by one because GPGPU-sim starts
                                   // from R1, while SASS starts from R0
