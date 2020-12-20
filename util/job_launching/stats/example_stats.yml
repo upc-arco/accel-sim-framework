@@ -8,6 +8,15 @@
 # These stats are continuously aggregated - even between kerenels and should
 # be diff'd to get the per-kernel stats
 collect_aggregate:
+    - 'gpgpu_n_completed_winst_LD_LDST_cycle\s*=\s*(.*)'
+    - 'gpgpu_n_tot_completed_winst_LD_LDSTQ_cycle\s*=\s*(.*)'
+    - 'gpgpu_n_tot_completed_winst_ST_LDST_cycle\s*=\s*(.*)'
+    - 'gpgpu_n_tot_opreg_writes_ALU\s*=\s*(.*)'
+    - 'gpgpu_n_tot_opreg_writes_LDST\s*=\s*(.*)'
+    - 'gpgpu_n_tot_scheduled_writeback_LDST\s*=\s*(.*)'
+    - 'gpgpu_n_tot_successful_writeback_LDST\s*=\s*(.*)'
+    - 'gpgpu_n_tot_failed_writeback_LDST\s*=\s*(.*)'
+    - 'gpgpu_n_tot_completed_writeback_LDST\s*=\s*(.*)'
     - 'gpgpu_n_tot_completed_winst_ALU\s*=\s*(.*)'
     - 'gpgpu_n_tot_completed_winst_LDST\s*=\s*(.*)'
     - 'gpgpu_n_tot_dispatched_winst_ALU\s*=\s*(.*)'
