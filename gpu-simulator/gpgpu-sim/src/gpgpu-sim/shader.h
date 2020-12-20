@@ -1625,6 +1625,14 @@ struct shader_core_stats_pod {
   unsigned *m_num_tex_inst;
   unsigned *m_num_fpmul_acesses;
   unsigned *m_num_idiv_acesses;
+  
+  unsigned *m_num_dispatched_winst_ALU; // number of dispatched warp insts to ALU pipeline
+  unsigned *m_num_dispatched_winst_LDST; // number of dispatched warp insts to LDST pipeline
+  unsigned *m_num_completed_winst_ALU; // number of completed warp insts from ALU pipeline
+  unsigned *m_num_completed_winst_LDST; // number of completed warp insts from LDST pipeline 
+  unsigned *m_num_writeback_winst_ALU; // number of writeback warp insts from LDST pipeline
+  unsigned *m_num_writeback_winst_LDST; // number of writeback warp insts from ALU pipeline
+
   unsigned *m_num_fpdiv_acesses;
   unsigned *m_num_sp_acesses;
   unsigned *m_num_sfu_acesses;
@@ -1708,6 +1716,14 @@ class shader_core_stats : public shader_core_stats_pod {
     memset(pod, 0, sizeof(shader_core_stats_pod));
     shader_cycles = (unsigned long long *)calloc(config->num_shader(),
                                                  sizeof(unsigned long long));
+
+    m_num_dispatched_winst_ALU = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_num_dispatched_winst_LDST = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_num_completed_winst_ALU = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_num_completed_winst_LDST = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_num_writeback_winst_ALU = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+    m_num_writeback_winst_LDST = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
+
     m_num_sim_insn = (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
     m_num_sim_winsn =
         (unsigned *)calloc(config->num_shader(), sizeof(unsigned));
@@ -1828,6 +1844,13 @@ class shader_core_stats : public shader_core_stats_pod {
     free(m_n_diverge);
     free(shader_cycle_distro);
     free(last_shader_cycle_distro);
+    
+    free(m_num_dispatched_winst_ALU);
+    free(m_num_dispatched_winst_LDST);
+    free(m_num_completed_winst_ALU);
+    free(m_num_completed_winst_LDST);    
+    free(m_num_writeback_winst_ALU);
+    free(m_num_writeback_winst_LDST);
   }
 
   void new_grid() {}
@@ -2112,6 +2135,7 @@ class shader_core_ctx : public core_t {
       m_stats->m_sass_write_regfile_acesses[m_sid] += num_dst;
     }  
   }
+  
   void incregfile_write_conflict(){
     ++m_stats->m_tot_regfile_acesses_conflicts[m_sid];
   }
@@ -2130,6 +2154,25 @@ class shader_core_ctx : public core_t {
   void incnon_rf_operands(unsigned active_count) {
     m_stats->m_non_rf_operands[m_sid] =
         m_stats->m_non_rf_operands[m_sid] + active_count;
+  }
+
+  void incdispatched_winst_ALU() {
+    ++m_stats->m_num_dispatched_winst_ALU[m_sid];
+  }
+  void incdispatched_winst_LDST() {
+    ++m_stats->m_num_dispatched_winst_LDST[m_sid];
+  }
+  void inccompleted_winst_ALU() {
+    ++m_stats->m_num_completed_winst_ALU[m_sid];
+  }
+  void inccompleted_winst_LDST() {
+    ++m_stats->m_num_completed_winst_LDST[m_sid];
+  }
+  void incwriteback_winst_ALU() {
+    ++m_stats->m_num_writeback_winst_ALU[m_sid];
+  }
+  void incwriteback_winst_LDST() {
+    ++m_stats->m_num_writeback_winst_LDST[m_sid];
   }
 
   void incspactivelanes_stat(unsigned active_count) {
