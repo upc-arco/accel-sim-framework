@@ -9,3 +9,5 @@ start_sim.sh
 .vscode
 monitor.sh
 generate_stats.sh
+*.csv
+

@@ -584,11 +584,97 @@ float shader_core_ctx::get_current_occupancy(unsigned long long &active,
 void shader_core_stats::print(FILE *fout) const {
   unsigned long long thread_icount_uarch = 0;
   unsigned long long warp_icount_uarch = 0;
+  unsigned long long total_num_sass_writes = 0;
+  unsigned long long total_num_sass_reads = 0;
+  unsigned long long total_num_opreg_writes = 0;
+  unsigned long long total_num_opreg_reads = 0;
+  unsigned long long total_gpgpusim_rf_writes = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts_ALU = 0;
+  unsigned long long total_gpgpusim_rf_write_conflicts_LDST = 0;
+  unsigned long long total_winsts_with_rf_write = 0;
+  unsigned long long total_completed_winst_ALU = 0;
+  unsigned long long total_completed_winst_LDST = 0;
+  unsigned long long total_dispatched_winst_ALU = 0;
+  unsigned long long total_dispatched_winst_LDST = 0;
+  unsigned long long total_writeback_winst_ALU = 0;
+  unsigned long long total_writeback_winst_LDST = 0;
+
+  unsigned long long total_scheduled_writeback_LDST = 0; // number of scheduled winsts in LDST writeback
+  unsigned long long total_successful_writeback_LDST = 0; // number of successful writebacks for winsts in LDST writeback
+  unsigned long long total_failed_writeback_LDST = 0; // number of failed writebacks for winsts in LDST writeback
+  unsigned long long total_completed_writeback_LDST = 0; // number of completed winsts in LDST writeback
+
+  unsigned long long total_opreg_writes_ALU = 0;
+  unsigned long long total_opreg_writes_LDST = 0;
+
+  unsigned long long total_completed_winst_LD_LDST_cycle = 0; // number of completed insts in LDST cycle for load
+  unsigned long long total_completed_winst_LD_LDSTQ_cycle = 0; // number of completed insts in LDST queue cycle for load
+  unsigned long long total_completed_winst_ST_LDST_cycle = 0; // number of completed insts in LDST cycle for store
 
   for (unsigned i = 0; i < m_config->num_shader(); i++) {
+
+    total_completed_winst_LD_LDST_cycle += m_num_completed_winst_LD_LDST_cycle[i];
+    total_completed_winst_LD_LDSTQ_cycle += m_num_completed_winst_LD_LDSTQ_cycle[i];
+    total_completed_winst_ST_LDST_cycle += m_num_completed_winst_ST_LDST_cycle[i];
     thread_icount_uarch += m_num_sim_insn[i];
     warp_icount_uarch += m_num_sim_winsn[i];
+    total_num_sass_writes += m_sass_write_regfile_acesses[i];
+    total_num_sass_reads += m_sass_read_regfile_acesses[i];
+    total_num_opreg_reads += m_read_regfile_acesses[i] / m_config->warp_size;
+    total_num_opreg_writes += m_opwrite_regfile_accesses[i];
+    total_opreg_writes_ALU += m_opwrite_regfile_ALU[i];
+    total_opreg_writes_LDST += m_opwrite_regfile_LDST[i];
+    total_gpgpusim_rf_writes += m_write_regfile_acesses[i] / m_config->warp_size;
+    total_gpgpusim_rf_write_conflicts += m_tot_regfile_acesses_conflicts[i];
+    total_gpgpusim_rf_write_conflicts_ALU += m_tot_regfile_acesses_conflicts_ALU[i];
+    total_gpgpusim_rf_write_conflicts_LDST += m_tot_regfile_acesses_conflicts_LDST[i];
+    total_winsts_with_rf_write += m_winsts_with_rf_write[i];
+    total_completed_winst_ALU += m_num_completed_winst_ALU[i];
+    total_completed_winst_LDST += m_num_completed_winst_LDST[i];
+    total_dispatched_winst_ALU += m_num_dispatched_winst_ALU[i];
+    total_dispatched_winst_LDST += m_num_dispatched_winst_LDST[i];
+    total_writeback_winst_ALU += m_num_writeback_winst_ALU[i];
+    total_writeback_winst_LDST += m_num_writeback_winst_LDST[i];
+
+    total_scheduled_writeback_LDST += m_num_scheduled_writeback_LDST[i];
+    total_successful_writeback_LDST += m_num_successful_writeback_LDST[i];
+    total_failed_writeback_LDST += m_num_failed_writeback_LDST[i];
+    total_completed_writeback_LDST += m_num_completed_writeback_LDST[i];
+    
   }
+
+  fprintf(fout, "gpgpu_n_completed_winst_LD_LDST_cycle = %lld\n", total_completed_winst_LD_LDST_cycle);
+  fprintf(fout, "gpgpu_n_tot_completed_winst_LD_LDSTQ_cycle = %lld\n", total_completed_winst_LD_LDSTQ_cycle);
+  fprintf(fout, "gpgpu_n_tot_completed_winst_ST_LDST_cycle = %lld\n", total_completed_winst_ST_LDST_cycle);
+
+  fprintf(fout, "gpgpu_n_tot_opreg_writes_ALU = %lld\n", total_opreg_writes_ALU);
+  fprintf(fout, "gpgpu_n_tot_opreg_writes_LDST = %lld\n", total_opreg_writes_LDST);
+
+  fprintf(fout, "gpgpu_n_tot_scheduled_writeback_LDST = %lld\n", total_scheduled_writeback_LDST);
+
+  fprintf(fout, "gpgpu_n_tot_scheduled_writeback_LDST = %lld\n", total_scheduled_writeback_LDST);
+  fprintf(fout, "gpgpu_n_tot_successful_writeback_LDST = %lld\n", total_successful_writeback_LDST);
+  fprintf(fout, "gpgpu_n_tot_failed_writeback_LDST = %lld\n", total_failed_writeback_LDST);
+  fprintf(fout, "gpgpu_n_tot_completed_writeback_LDST = %lld\n", total_completed_writeback_LDST);
+
+  fprintf(fout, "gpgpu_n_tot_sass_writes = %lld\n", total_num_sass_writes);
+  fprintf(fout, "gpgpu_n_tot_sass_reads = %lld\n", total_num_sass_reads);
+  fprintf(fout, "gpgpu_n_tot_opreg_reads = %lld\n", total_num_opreg_reads);
+  fprintf(fout, "gpgpu_n_tot_opreg_writes = %lld\n", total_num_opreg_writes);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_writes = %lld\n", total_gpgpusim_rf_writes);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts = %lld\n", total_gpgpusim_rf_write_conflicts);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts_ALU = %lld\n", total_gpgpusim_rf_write_conflicts_ALU);
+  fprintf(fout, "gpgpu_n_tot_gpgpusim_rf_write_conflicts_LDST = %lld\n", total_gpgpusim_rf_write_conflicts_LDST);
+  fprintf(fout, "gpgpu_n_tot_winsts_with_rf_write = %lld\n", total_winsts_with_rf_write);
+
+  fprintf(fout, "gpgpu_n_tot_completed_winst_ALU = %lld\n", total_completed_winst_ALU);
+  fprintf(fout, "gpgpu_n_tot_completed_winst_LDST = %lld\n", total_completed_winst_LDST);
+  fprintf(fout, "gpgpu_n_tot_dispatched_winst_ALU = %lld\n", total_dispatched_winst_ALU);
+  fprintf(fout, "gpgpu_n_tot_dispatched_winst_LDST = %lld\n", total_dispatched_winst_LDST);
+  fprintf(fout, "gpgpu_n_tot_writeback_winst_ALU = %lld\n", total_writeback_winst_ALU);
+  fprintf(fout, "gpgpu_n_tot_writeback_winst_LDST = %lld\n", total_writeback_winst_LDST);
+
   fprintf(fout, "gpgpu_n_tot_thrd_icount = %lld\n", thread_icount_uarch);
   fprintf(fout, "gpgpu_n_tot_w_icount = %lld\n", warp_icount_uarch);
 
@@ -1683,8 +1769,10 @@ void shader_core_ctx::execute() {
         assert((*ready_reg)->latency < MAX_ALU_LATENCY);
         // m_result_bus[resbus]->set((*ready_reg)->latency);
         m_fu[n]->issue(issue_inst);
+        incdispatched_winst_ALU();
       } else if (!schedule_wb_now) {
         m_fu[n]->issue(issue_inst);
+        incdispatched_winst_LDST();
       } else {
         // stall issue (cannot reserve result bus)
       }
@@ -1737,6 +1825,12 @@ void shader_core_ctx::warp_inst_complete(const warp_inst_t &inst) {
   m_stats->m_num_sim_winsn[m_sid]++;
   m_gpu->gpu_sim_insn += inst.active_count();
   inst.completed(m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
+
+  // count sass level source operand reads and destination writes
+  incregfile_sass_writes(inst);
+  incregfile_sass_reads(inst.num_sass_src_ops);
+  if(inst.op_pipe == MEM__OP) inccompleted_winst_LDST();
+  else inccompleted_winst_ALU();
 }
 
 void shader_core_ctx::writeback() {
@@ -1771,7 +1865,9 @@ void shader_core_ctx::writeback() {
      * no stalling).
      */
 
-    m_operand_collector.writeback(*pipe_reg);
+    if(!m_operand_collector.writeback(*pipe_reg))
+      incregfile_write_conflict_ALU();
+    incwriteback_winst_ALU();
     unsigned warp_id = pipe_reg->warp_id();
     m_scoreboard->releaseRegisters(pipe_reg);
     m_warp[warp_id]->dec_inst_in_pipeline();
@@ -1951,6 +2047,8 @@ void ldst_unit::L1_latency_queue_cycle() {
                 m_scoreboard->releaseRegister(mf_next->get_inst().warp_id(),
                                               mf_next->get_inst().out[r]);
                 m_core->warp_inst_complete(mf_next->get_inst());
+                assert(mf_next->get_inst().is_load());
+                m_core->inccompleted_winst_LD_LDSTQ_cycle();
               }
             }
         }
@@ -2449,11 +2547,18 @@ void ldst_unit::writeback() {
         }
       }
       if (insn_completed) {
+        assert(m_next_wb.is_load());
         m_core->warp_inst_complete(m_next_wb);
+        m_core->incscomplinstwb_LDS();
       }
       m_next_wb.clear();
+      m_core->incwriteback_winst_LDST();
+      m_core->incsuccessfulwb_LDS();
       m_last_inst_gpu_sim_cycle = m_core->get_gpu()->gpu_sim_cycle;
       m_last_inst_gpu_tot_sim_cycle = m_core->get_gpu()->gpu_tot_sim_cycle;
+    } else {
+      m_core->incregfile_write_conflict_LDST();
+      m_core->incfailedwb_LDS();
     }
   }
 
@@ -2520,6 +2625,7 @@ void ldst_unit::writeback() {
   // 1. the writeback buffer was available
   // 2. a client was serviced
   if (serviced_client != (unsigned)-1) {
+    m_core->incschdwb_LDS();
     m_writeback_arb = (serviced_client + 1) % m_num_writeback_clients;
   }
 }
@@ -2671,7 +2777,9 @@ void ldst_unit::cycle() {
           }
         }
         if (!pending_requests) {
+          assert(m_dispatch_reg->is_load());
           m_core->warp_inst_complete(*m_dispatch_reg);
+          m_core->inccompleted_winst_LD_LDST_cycle();
           m_scoreboard->releaseRegisters(m_dispatch_reg);
         }
         m_core->dec_inst_in_pipeline(warp_id);
@@ -2679,8 +2787,10 @@ void ldst_unit::cycle() {
       }
     } else {
       // stores exit pipeline here
+      assert(m_dispatch_reg->is_store());
       m_core->dec_inst_in_pipeline(warp_id);
       m_core->warp_inst_complete(*m_dispatch_reg);
+      m_core->inccompleted_winst_ST_LDST_cycle();
       m_dispatch_reg->clear();
     }
   }
@@ -3901,6 +4011,7 @@ int register_bank(int regnum, int wid, unsigned num_banks,
 bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
   assert(!inst.empty());
   std::list<unsigned> regs = m_shader->get_regs_written(inst);
+  assert(regs.size()<=2);
   for (unsigned op = 0; op < MAX_REG_OPERANDS; op++) {
     int reg_num = inst.arch_reg.dst[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
@@ -3914,7 +4025,9 @@ bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
         inst.arch_reg.dst[op] = -1;
+        m_shader->incregfile_opwrites(inst);
       } else {
+        m_shader->incregfile_write_conflict();
         return false;
       }
     }
