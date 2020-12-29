@@ -430,9 +430,11 @@ void shader_core_ctx::create_exec_pipeline() {
 
   // there are as many result buses as the width of the EX_WB stage
   num_result_bus = m_config->pipe_widths[EX_WB];
-  for (unsigned i = 0; i < num_result_bus; i++) {
-    this->m_result_bus.push_back(new std::bitset<MAX_ALU_LATENCY>());
-  }
+  // for (unsigned i = 0; i < num_result_bus; i++) {
+  //   this->m_result_bus.push_back(new std::bitset<MAX_ALU_LATENCY>());
+  // }
+
+  m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks, &m_operand_collector);
 }
 
 shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
@@ -1660,9 +1662,12 @@ int shader_core_ctx::test_res_bus(int latency) {
 }
 
 void shader_core_ctx::execute() {
-  for (unsigned i = 0; i < num_result_bus; i++) {
-    *(m_result_bus[i]) >>= 1;
-  }
+  // for (unsigned i = 0; i < num_result_bus; i++) {
+  //   *(m_result_bus[i]) >>= 1;
+  // }
+
+  m_res_bus.cycle();
+
   for (unsigned n = 0; n < m_num_function_units; n++) {
     unsigned multiplier = m_fu[n]->clock_multiplier();
     for (unsigned c = 0; c < multiplier; c++) m_fu[n]->cycle();
@@ -1672,11 +1677,11 @@ void shader_core_ctx::execute() {
     warp_inst_t **ready_reg = issue_inst.get_ready();
     if (issue_inst.has_ready() && m_fu[n]->can_issue(**ready_reg)) {
       bool schedule_wb_now = !m_fu[n]->stallable();
-      int resbus = -1;
+      // int resbus = -1;
       if (schedule_wb_now &&
-          (resbus = test_res_bus((*ready_reg)->latency)) != -1) {
+          (/*resbus = */m_res_bus.test(*ready_reg) != -1)) {
         assert((*ready_reg)->latency < MAX_ALU_LATENCY);
-        m_result_bus[resbus]->set((*ready_reg)->latency);
+        // m_result_bus[resbus]->set((*ready_reg)->latency);
         m_fu[n]->issue(issue_inst);
       } else if (!schedule_wb_now) {
         m_fu[n]->issue(issue_inst);

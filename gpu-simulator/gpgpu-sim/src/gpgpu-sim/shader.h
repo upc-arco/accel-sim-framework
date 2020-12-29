@@ -54,6 +54,7 @@
 #include "stack.h"
 #include "stats.h"
 #include "traffic_breakdown.h"
+#include "result-bus.h"
 
 #define NO_OP_FLAG 0xFF
 
@@ -938,6 +939,8 @@ class opndcoll_rfu_t {  // operand collector based register file unit
   // opndcoll_rfu_t data members
   bool m_initialized;
 
+  friend class ResultBus;
+  
   unsigned m_num_collector_sets;
   // unsigned m_num_collectors;
   unsigned m_num_banks;
@@ -2239,6 +2242,8 @@ class shader_core_ctx : public core_t {
   static const unsigned MAX_ALU_LATENCY = 512;
   unsigned num_result_bus;
   std::vector<std::bitset<MAX_ALU_LATENCY> *> m_result_bus;
+
+  ResultBus m_res_bus; // the modified result bus
 
   // used for local address mapping with single kernel launch
   unsigned kernel_max_cta_per_shader;
