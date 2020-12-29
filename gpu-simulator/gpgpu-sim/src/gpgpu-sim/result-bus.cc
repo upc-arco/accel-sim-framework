@@ -23,19 +23,19 @@ unsigned ResultBus::num_free_slots(unsigned latency) const {
 
 void ResultBus::allocate_noreg_insts(const warp_inst_t *inst) const {
   unsigned latency = inst->latency;
-  bool allocated = false;
   for (size_t i = m_num_banks; i < m_res_busses.size(); i++)
     if (!m_res_busses[i]->test(latency)) {
       m_res_busses[i]->set(latency);
-      allocated = true;
+      return;
     }
-  assert(allocated);
+  assert(1);
 }
 
 int ResultBus::test(const warp_inst_t *inst) {
   unsigned latency = inst->latency;
   assert(latency < MAX_ALU_LATENCY);
   unsigned fs_count = num_free_slots(latency);
+  assert(fs_count <= m_width);
   if (!fs_count) return -1;  // there is no latch available
 
   int regbank1, regbank2;
@@ -49,6 +49,7 @@ int ResultBus::test(const warp_inst_t *inst) {
     return -1;                   // conflict with first access
   if (regbank2 != -1) {          // there is a second access
     if (regbank1 == regbank2) {  // conflict within the instruction accesses
+      assert(num_free_slots(latency + 1) < m_width);
       if (m_res_busses[regbank2]->test(latency + 1) ||
           !num_free_slots(latency + 1))
         return -1;  // conflict or no room for second access

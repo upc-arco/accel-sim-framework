@@ -8,3 +8,4 @@ clean_sim.sh
 start_sim.sh
 .vscode
 monitor.sh
+generate_stats.sh
