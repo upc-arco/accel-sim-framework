@@ -72,6 +72,7 @@
 #define WRITE_MASK_SIZE 8
 
 class gpgpu_context;
+class RFWithIdealCache;
 
 enum exec_unit_type_t {
   NONE = 0,
@@ -1882,7 +1883,9 @@ class shader_core_ctx : public core_t {
                   unsigned shader_id, unsigned tpc_id,
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
-
+  virtual ~shader_core_ctx() {
+    delete m_operand_collector;
+  }
   // used by simt_core_cluster:
   // modifiers
   void cycle();
@@ -2222,7 +2225,7 @@ class shader_core_ctx : public core_t {
   ifetch_buffer_t m_inst_fetch_buffer;
   std::vector<register_set> m_pipeline_reg;
   Scoreboard *m_scoreboard;
-  opndcoll_rfu_t m_operand_collector;
+  RFWithIdealCache *m_operand_collector;
   int m_active_warps;
   std::vector<register_set *> m_specilized_dispatch_reg;
 

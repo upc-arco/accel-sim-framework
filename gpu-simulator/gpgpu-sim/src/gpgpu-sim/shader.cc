@@ -47,6 +47,7 @@
 #include "stat-tool.h"
 #include "traffic_breakdown.h"
 #include "visualizer.h"
+#include "ideal_rfcache.h"
 
 #define PRIORITIZE_MSHR_OVER_WB 1
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -245,8 +246,9 @@ void shader_core_ctx::create_exec_pipeline() {
   opndcoll_rfu_t::port_vector_t out_ports;
   opndcoll_rfu_t::uint_vector_t cu_sets;
 
+  m_operand_collector = new RFWithIdealCache();
   // configure generic collectors
-  m_operand_collector.add_cu_set(
+  m_operand_collector->add_cu_set(
       GEN_CUS, m_config->gpgpu_operand_collector_num_units_gen,
       m_config->gpgpu_operand_collector_num_out_ports_gen);
 
@@ -279,28 +281,28 @@ void shader_core_ctx::create_exec_pipeline() {
       }
     }
     cu_sets.push_back((unsigned)GEN_CUS);
-    m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+    m_operand_collector->add_port(in_ports, out_ports, cu_sets);
     in_ports.clear(), out_ports.clear(), cu_sets.clear();
   }
 
   if (m_config->enable_specialized_operand_collector) {
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         SP_CUS, m_config->gpgpu_operand_collector_num_units_sp,
         m_config->gpgpu_operand_collector_num_out_ports_sp);
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         DP_CUS, m_config->gpgpu_operand_collector_num_units_dp,
         m_config->gpgpu_operand_collector_num_out_ports_dp);
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         TENSOR_CORE_CUS,
         m_config->gpgpu_operand_collector_num_units_tensor_core,
         m_config->gpgpu_operand_collector_num_out_ports_tensor_core);
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         SFU_CUS, m_config->gpgpu_operand_collector_num_units_sfu,
         m_config->gpgpu_operand_collector_num_out_ports_sfu);
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         MEM_CUS, m_config->gpgpu_operand_collector_num_units_mem,
         m_config->gpgpu_operand_collector_num_out_ports_mem);
-    m_operand_collector.add_cu_set(
+    m_operand_collector->add_cu_set(
         INT_CUS, m_config->gpgpu_operand_collector_num_units_int,
         m_config->gpgpu_operand_collector_num_out_ports_int);
 
@@ -310,7 +312,7 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_SP]);
       cu_sets.push_back((unsigned)SP_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
 
@@ -320,7 +322,7 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_DP]);
       cu_sets.push_back((unsigned)DP_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
 
@@ -330,7 +332,7 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_SFU]);
       cu_sets.push_back((unsigned)SFU_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
 
@@ -340,7 +342,7 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_TENSOR_CORE]);
       cu_sets.push_back((unsigned)TENSOR_CORE_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
 
@@ -350,7 +352,7 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_MEM]);
       cu_sets.push_back((unsigned)MEM_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
 
@@ -360,12 +362,12 @@ void shader_core_ctx::create_exec_pipeline() {
       out_ports.push_back(&m_pipeline_reg[OC_EX_INT]);
       cu_sets.push_back((unsigned)INT_CUS);
       cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+      m_operand_collector->add_port(in_ports, out_ports, cu_sets);
       in_ports.clear(), out_ports.clear(), cu_sets.clear();
     }
   }
 
-  m_operand_collector.init(m_config->gpgpu_num_reg_banks, this);
+  m_operand_collector->init(m_config->gpgpu_num_reg_banks, this);
 
   m_num_function_units =
       m_config->gpgpu_num_sp_units + m_config->gpgpu_num_dp_units +
@@ -418,7 +420,7 @@ void shader_core_ctx::create_exec_pipeline() {
   }
 
   m_ldst_unit = new ldst_unit(m_icnt, m_mem_fetch_allocator, this,
-                              &m_operand_collector, m_scoreboard, m_config,
+                              m_operand_collector, m_scoreboard, m_config,
                               m_memory_config, m_stats, m_sid, m_tpc);
   m_fu.push_back(m_ldst_unit);
   m_dispatch_port.push_back(ID_OC_MEM);
@@ -434,7 +436,7 @@ void shader_core_ctx::create_exec_pipeline() {
   //   this->m_result_bus.push_back(new std::bitset<MAX_ALU_LATENCY>());
   // }
 
-  m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks, &m_operand_collector);
+  m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks, m_operand_collector);
 }
 
 shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
@@ -1771,7 +1773,7 @@ void shader_core_ctx::writeback() {
      * no stalling).
      */
 
-    m_operand_collector.writeback(*pipe_reg);
+    m_operand_collector->writeback(*pipe_reg);
     unsigned warp_id = pipe_reg->warp_id();
     m_scoreboard->releaseRegisters(pipe_reg);
     m_warp[warp_id]->dec_inst_in_pipeline();
@@ -3151,7 +3153,7 @@ void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
      print_stage(ID_OC_MEM, fout);
   */
   fprintf(fout, "-------------------------- OP COL\n");
-  m_operand_collector.dump(fout);
+  m_operand_collector->dump(fout);
   /* fprintf(fout, "OC/EX (SP)  = ");
      print_stage(OC_EX_SP, fout);
      fprintf(fout, "OC/EX (SFU) = ");
