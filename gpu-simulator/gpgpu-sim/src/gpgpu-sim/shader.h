@@ -55,6 +55,7 @@
 #include "stats.h"
 #include "traffic_breakdown.h"
 #include "result-bus.h"
+#include "rfcache_stats.h"
 
 #define NO_OP_FLAG 0xFF
 
@@ -1714,6 +1715,8 @@ struct shader_core_stats_pod {
   unsigned *gpgpu_n_shmem_bank_access;
   long *n_simt_to_mem;  // Interconnect power stats
   long *n_mem_to_simt;
+
+  RFCacheStats *m_rfcache_stats;
 };
 
 class shader_core_stats : public shader_core_stats_pod {
@@ -1820,6 +1823,9 @@ class shader_core_stats : public shader_core_stats_pod {
 
     m_shader_dynamic_warp_issue_distro.resize(config->num_shader());
     m_shader_warp_slot_issue_distro.resize(config->num_shader());
+
+    m_rfcache_stats = new RFCacheStats();
+    m_rfcache_stats->init(config);
   }
 
   ~shader_core_stats() {
@@ -1830,6 +1836,7 @@ class shader_core_stats : public shader_core_stats_pod {
     free(m_n_diverge);
     free(shader_cycle_distro);
     free(last_shader_cycle_distro);
+    delete m_rfcache_stats;
   }
 
   void new_grid() {}
@@ -1941,7 +1948,6 @@ class shader_core_ctx : public core_t {
   }
   kernel_info_t *get_kernel() { return m_kernel; }
   unsigned get_sid() const { return m_sid; }
-
   // used by functional simulation:
   // modifiers
   virtual void warp_exit(unsigned warp_id);
@@ -2218,9 +2224,10 @@ class shader_core_ctx : public core_t {
   const memory_config *m_memory_config;
   class simt_core_cluster *m_cluster;
 
+  public:
   // statistics
   shader_core_stats *m_stats;
-
+  protected:
   // CTA scheduling / hardware thread allocation
   unsigned m_n_active_cta;  // number of Cooperative Thread Arrays (blocks)
                             // currently running on this shader.

@@ -5,22 +5,27 @@ CACHE_ACCESS_STAT_t IdealRFCache::read_access(const tag_t &tag,
   DPRINTF(std::cout << "sid: " << m_shader->get_sid()
                     << " read access: table_size: " << m_cache_table.size()
                     << " ";)
+
+  unsigned sid = m_shader->get_sid();
   if (m_cache_table.find(tag) == m_cache_table.end()) {
     DPRINTF(std::cout << "Miss: <" << tag.first << ", " << tag.second
                       << ">, oc_slot: " << m_cache_table[tag].count()
                       << std::endl;)
     m_cache_table[tag].set(oc_slot);
+    m_rfcache_stats->incread_miss(sid);
     return Miss;
   } else if (m_cache_table[tag].any()) {
     DPRINTF(std::cout << "Reservation: <" << tag.first << ", " << tag.second
                       << ">, oc_slot: " << m_cache_table[tag].count()
                       << std::endl;)
     m_cache_table[tag].set(oc_slot);
+    m_rfcache_stats->incread_reservation(sid);
     return Reservation;
   } else {
     DPRINTF(std::cout << "Hit: <" << tag.first << ", " << tag.second
                       << ">, oc_slot: " << m_cache_table[tag].count()
                       << std::endl;)
+    m_rfcache_stats->incread_hit(sid);
     return Hit;
   }
 }
@@ -41,15 +46,18 @@ CACHE_ACCESS_STAT_t IdealRFCache::write_access(const tag_t &tag) {
   DPRINTF(std::cout << "sid: " << m_shader->get_sid()
                     << " cache write access: wid: " << tag.first
                     << " reg_id: " << tag.second;)
+  unsigned sid = m_shader->get_sid();
   if (m_cache_table.find(tag) == m_cache_table.end()) {
     DPRINTF(std::cout << " Miss: table_size: " << m_cache_table.size()
                       << std::endl;)
+    m_rfcache_stats->incwrite_miss(sid);
     return Miss;
   } else {
     DPRINTF(std::cout << " Hit: table_size: " << m_cache_table.size()
                       << " miss_oc_slots: " << m_cache_table[tag].count()
                       << std::endl;)
     assert(!m_cache_table[tag].any());
+    m_rfcache_stats->incwrite_hit(sid);
     return Hit;
   }
 }
@@ -68,7 +76,7 @@ void RFWithCache::init(unsigned num_banks, shader_core_ctx *shader) {
   m_shader = shader;
   assert(m_shader->get_config()->gpgpu_operand_collector_num_units_gen <=
          MAX_OC_COUNT);
-
+  m_rfcache_stats = m_shader->m_stats->m_rfcache_stats;
   opndcoll_rfu_t::init(num_banks, shader);
   m_cache->init(m_shader);
 

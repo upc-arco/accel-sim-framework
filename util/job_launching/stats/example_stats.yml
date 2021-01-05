@@ -8,6 +8,11 @@
 # These stats are continuously aggregated - even between kerenels and should
 # be diff'd to get the per-kernel stats
 collect_aggregate:
+    - 'rfcache_n_tot_read_hits\s*=\s*(.*)'
+    - 'rfcache_n_tot_read_misses\s*=\s*(.*)'
+    - 'rfcache_n_tot_read_reservation\s*=\s*(.*)'
+    - 'rfcache_n_tot_write_hits\s*=\s*(.*)'
+    - 'rfcache_n_tot_write_misses\s*=\s*(.*)'
     - 'gpu_tot_sim_insn\s*=\s*(.*)'
     - 'gpgpu_simulation_time\s*=.*\(([0-9]+) sec\).*'
     - 'gpu_tot_sim_cycle\s*=\s*(.*)'

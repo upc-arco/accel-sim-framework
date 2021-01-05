@@ -8,13 +8,14 @@
 
 #include "shader.h"
 
+#define DDBUG
 #ifdef DDEBUG
 #define DPRINTF(X) X
 #else
 #define DPRINTF(X)
 #endif
 
-    const unsigned MAX_OC_COUNT = 100;
+const unsigned MAX_OC_COUNT = 100;
 const unsigned MAX_SLOTS_PER_OC = 6;  // at most 3 OPs, 2 slots each
 
 using tag_t = std::pair<unsigned, unsigned>;  // warp_id and register_id maps to
@@ -27,7 +28,10 @@ using missed_oc_slots_t =
 enum CACHE_ACCESS_STAT_t { Hit, Miss, Reservation, Invalid_Access };
 class RFCache {
  public:
-  void init(shader_core_ctx *shader) { m_shader = shader; }
+  void init(shader_core_ctx *shader) {
+    m_shader = shader;
+    m_rfcache_stats = shader->m_stats->m_rfcache_stats;
+  }
   virtual CACHE_ACCESS_STAT_t access(const tag_t &) = 0;
   virtual CACHE_ACCESS_STAT_t read_access(const tag_t &, unsigned oc_slot) = 0;
   virtual CACHE_ACCESS_STAT_t write_access(const tag_t &) = 0;
@@ -37,6 +41,7 @@ class RFCache {
 
  protected:
   shader_core_ctx *m_shader;
+  RFCacheStats *m_rfcache_stats;
 };
 
 // A hash function used to hash a pair of any kind
@@ -55,6 +60,7 @@ class IdealRFCache : public RFCache {
   virtual CACHE_ACCESS_STAT_t write_access(const tag_t &);
   virtual missed_oc_slots_t service_read_miss(const tag_t &);
   virtual void allocate_for_write(const tag_t &);
+
  private:
   std::unordered_map<tag_t, missed_oc_slots_t, hash_pair>
       m_cache_table;  // we don't need data for RFCache
@@ -68,9 +74,11 @@ class RFWithCache : public opndcoll_rfu_t {
                           unsigned num_dispatch);
   virtual void allocate_reads();
   virtual bool writeback(warp_inst_t &warp);
+
  private:
   shader_core_ctx *m_shader;  // shader core
   RFCache *m_cache;
+  RFCacheStats *m_rfcache_stats;
   class modified_collector_unit_t : public opndcoll_rfu_t::collector_unit_t {
    public:
     modified_collector_unit_t(RFCache *cache) : m_cache(cache) {}
