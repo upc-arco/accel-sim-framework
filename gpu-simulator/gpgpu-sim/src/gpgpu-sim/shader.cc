@@ -238,6 +238,16 @@ void shader_core_ctx::create_schedulers() {
   }
 }
 
+void shader_core_ctx::create_rfwithcache() {
+  const auto & rfcache_config = m_config->m_rfcache_config;
+  if(rfcache_config.is_ideal())
+  {
+    m_operand_collector = new RFWithCache(m_config);
+  } else if (rfcache_config.is_first()) {
+    m_operand_collector = new RFWithCacheFirst(m_config); 
+  }
+}
+
 void shader_core_ctx::create_exec_pipeline() {
   // op collector configuration
   enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS };
@@ -246,7 +256,7 @@ void shader_core_ctx::create_exec_pipeline() {
   opndcoll_rfu_t::port_vector_t out_ports;
   opndcoll_rfu_t::uint_vector_t cu_sets;
 
-  m_operand_collector = new RFWithCache();
+  create_rfwithcache(); // create and initialize register file with cache implemented
   // configure generic collectors
   m_operand_collector->add_cu_set(
       GEN_CUS, m_config->gpgpu_operand_collector_num_units_gen,
@@ -435,8 +445,9 @@ void shader_core_ctx::create_exec_pipeline() {
   // for (unsigned i = 0; i < num_result_bus; i++) {
   //   this->m_result_bus.push_back(new std::bitset<MAX_ALU_LATENCY>());
   // }
-
   m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks, m_operand_collector);
+
+  
 }
 
 shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
@@ -449,7 +460,7 @@ shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
       m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core,
                  config->max_barriers_per_cta, config->warp_size),
       m_active_warps(0),
-      m_dynamic_warp_id(0) {
+      m_dynamic_warp_id(0), m_res_bus(config->m_rfcache_config) {
   m_cluster = cluster;
   m_config = config;
   m_memory_config = mem_config;
@@ -2559,8 +2570,10 @@ inst->space.get_type() != shared_space) { unsigned warp_id = inst->warp_id();
 */
 void ldst_unit::cycle() {
   writeback();
+  
   for (int i = 0; i < m_config->reg_file_port_throughput; ++i)
     m_operand_collector->step();
+
   for (unsigned stage = 0; (stage + 1) < m_pipeline_depth; stage++)
     if (m_pipeline_reg[stage]->empty() && !m_pipeline_reg[stage + 1]->empty())
       move_warp(m_pipeline_reg[stage], m_pipeline_reg[stage + 1]);
@@ -4049,7 +4062,7 @@ void opndcoll_rfu_t::collector_unit_t::dump(
   if (m_free) {
     fprintf(fp, "    <free>\n");
   } else {
-    m_warp->print(fp);
+    //m_warp->print(fp);
     for (unsigned i = 0; i < MAX_REG_OPERANDS * 2; i++) {
       if (m_not_ready.test(i)) {
         std::string r = m_src_op[i].get_reg_string();

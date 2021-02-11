@@ -3,6 +3,7 @@
 
 #include "result-bus.h"
 #include "shader.h"
+#include "rfcache.h"
 
 ResultBus::~ResultBus() {
   for (auto bus : m_res_busses) delete bus;
@@ -32,6 +33,40 @@ void ResultBus::allocate_noreg_insts(const warp_inst_t *inst) const {
 }
 
 int ResultBus::test(const warp_inst_t *inst) {
+  return m_rfcache_type == 1 ? ideal_test(inst) : first_test(inst);
+}
+
+int ResultBus::first_test(const warp_inst_t *inst) {
+  unsigned latency = inst->latency;
+  assert (latency < MAX_ALU_LATENCY);
+  unsigned fs_count = num_free_slots(latency);
+  assert(fs_count <= m_width);
+  
+  size_t num_regs = get_num_regs(*inst);
+  
+  size_t unreserved_slots = num_regs == 0 ? 1 : num_regs;
+
+  if (fs_count < unreserved_slots) return -1; // check for available free slots in result bus
+  
+  auto rf = static_cast<RFWithCacheFirst *>(m_rf);
+  if (!rf->lock_dstopnd_slots_in_cache(*inst)) return -1; // should lock slots in cache for writeback
+
+
+  for (auto bus : m_res_busses) {
+    if (!bus->test(latency)) {
+      bus->set(latency);
+      if (!--unreserved_slots)
+        break;
+    }
+  }
+
+  assert (unreserved_slots == 0);
+  
+  return 1; 
+}
+
+int ResultBus::ideal_test(const warp_inst_t *inst) {
+  std::cout << "resbus: test ideal" << std::endl;
   unsigned latency = inst->latency;
   assert(latency < MAX_ALU_LATENCY);
   unsigned fs_count = num_free_slots(latency);
@@ -67,6 +102,18 @@ int ResultBus::test(const warp_inst_t *inst) {
   return 1;
 }
 
+size_t ResultBus::get_num_regs(const warp_inst_t &inst) const {
+  size_t num_regs = 0;
+  for (unsigned op = 0; op < MAX_REG_OPERANDS; ++op) {
+    int reg_num = inst.arch_reg.dst[op];
+    if (reg_num >= 0) {
+      num_regs++;
+    }
+  }
+  assert(num_regs == 0 || num_regs == 1 || num_regs == 2);
+  return num_regs;
+}
+
 void ResultBus::find_reg_banks(const warp_inst_t *inst, int &regbank1,
                                int &regbank2) const {
   regbank1 = regbank2 = -1;
@@ -93,7 +140,24 @@ void ResultBus::init(unsigned width, unsigned num_banks, opndcoll_rfu_t *rf) {
   m_num_banks = num_banks;
   m_rf = rf;
 
-  for (size_t i = 0; i < m_num_banks + m_width; i++) {
+  size_t effective_width = m_width;
+
+  if (m_rfcache_type == 1) {
+    effective_width = m_num_banks + m_width;
+  }
+
+  for (size_t i = 0; i < effective_width; i++) {
     m_res_busses.push_back(new std::bitset<MAX_ALU_LATENCY>());
+  }
+}
+
+ResultBus::ResultBus(const RFCacheConfig &rfcache_config)
+    : m_rfcache_config(rfcache_config) {
+  if (m_rfcache_config.is_ideal()) {
+    m_rfcache_type = 1;
+    std::cout << "Resbus: ideal cache" << std::endl;
+  } else {
+    std::cout << "resubs: First design" << std::endl;
+    m_rfcache_type = 2;
   }
 }

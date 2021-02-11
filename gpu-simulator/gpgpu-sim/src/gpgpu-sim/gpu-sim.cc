@@ -249,6 +249,11 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                          " {<nsets>:<bsize>:<assoc>,<rep>:<wr>:<alloc>:<wr_"
                          "alloc>,<mshr>:<N>:<merge>,<mq> | none}",
                          "none");
+  option_parser_register(opp, "-gpgpu_rfcache", OPT_CSTR,
+                         &m_rfcache_config.m_config_string,
+                         "per-shader register file cache config "
+                         " {<type: 1 ideal, 2 first_design>:<nblocks>}",
+                         "1:-1");
   option_parser_register(opp, "-gpgpu_l1_banks", OPT_UINT32,
                          &m_L1D_config.l1_banks, "The number of L1 cache banks",
                          "1");

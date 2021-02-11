@@ -56,6 +56,7 @@
 #include "traffic_breakdown.h"
 #include "result-bus.h"
 #include "rfcache_stats.h"
+#include "rfcache_configs.h"
 
 #define NO_OP_FLAG 0xFF
 
@@ -587,7 +588,7 @@ class opndcoll_rfu_t {  // operand collector based register file unit
   // modifiers
   virtual bool writeback(warp_inst_t &warp);
 
-  void step() {
+  virtual void step() {
     dispatch_ready_cu();
     allocate_reads();
     for (unsigned p = 0; p < m_in_ports.size(); p++) allocate_cu(p);
@@ -601,21 +602,22 @@ class opndcoll_rfu_t {  // operand collector based register file unit
       fprintf(fp, "   CU-%2u: ", n);
       m_cu[n]->dump(fp, m_shader);
     }
-    m_arbiter->dump(fp);
+    //m_arbiter->dump(fp);
   }
 
   shader_core_ctx *shader_core() { return m_shader; }
-
- private:
+ 
+ protected:
   void process_banks() { m_arbiter->reset_alloction(); }
-
-  void dispatch_ready_cu();
-  void allocate_cu(unsigned port);
+  virtual void dispatch_ready_cu();
   virtual void allocate_reads();
+  virtual void allocate_cu(unsigned port);
+ 
 
   // types
 protected:
   class collector_unit_t;
+public:
   class op_t {
    public:
     op_t() { m_valid = false; m_reserved = false; }
@@ -705,7 +707,7 @@ protected:
     void reset() { m_valid = false; m_reserved = false; }
     void reserve() { m_reserved = true; }
     bool is_reserved() const { return m_reserved; }
-    void unreserve() { m_reserved = false; }
+    void unreserve() { assert(m_reserved); m_reserved = false; }
    private:
     bool m_valid;
     bool m_reserved;
@@ -759,7 +761,7 @@ private:
     op_t m_op;
   };
 
-protected:
+public:
   class arbiter_t {
    public:
     // constructors
@@ -772,7 +774,7 @@ protected:
       _request = NULL;
       m_last_cu = 0;
     }
-    void init(unsigned num_cu, unsigned num_banks) {
+    virtual void init(unsigned num_cu, unsigned num_banks) {
       assert(num_cu > 0);
       assert(num_banks > 0);
       m_num_collectors = num_cu;
@@ -812,7 +814,7 @@ protected:
     }
 
     // modifiers
-    std::list<op_t> allocate_reads();
+    virtual std::list<op_t> allocate_reads();
 
     virtual void add_read_requests(collector_unit_t *cu) {
       const op_t *src = cu->get_operands();
@@ -839,23 +841,21 @@ protected:
       for (unsigned b = 0; b < m_num_banks; b++) m_allocated_bank[b].reset();
     }
 
-   private:
-    unsigned m_num_banks;
-    unsigned m_num_collectors;
-
-    allocation_t *m_allocated_bank;  // bank # -> register that wins
 protected:
+    allocation_t *m_allocated_bank;  // bank # -> register that wins
+    unsigned m_num_collectors;
+    unsigned m_num_banks;
     std::list<op_t> *m_queue;
-private:
-    unsigned *
-        m_allocator_rr_head;  // cu # -> next bank to check for request (rr-arb)
     unsigned m_last_cu;       // first cu to check while arb-ing banks (rr)
-
     int *_inmatch;
     int *_outmatch;
     int **_request;
-  };
 private:
+    unsigned *
+        m_allocator_rr_head;  // cu # -> next bank to check for request (rr-arb)
+
+  };
+protected:
   class input_port_t {
    public:
     input_port_t(port_vector_t &input, port_vector_t &output,
@@ -869,7 +869,6 @@ private:
     uint_vector_t m_cu_sets;
   };
 
-protected:
   class collector_unit_t {
    public:
     // constructors
@@ -908,7 +907,7 @@ protected:
     }
     unsigned get_num_operands() const { return m_warp->get_num_operands(); }
     unsigned get_num_regs() const { return m_warp->get_num_regs(); }
-    void dispatch();
+    virtual void dispatch();
     bool is_free() { return m_free; }
     bool is_not_ready_op(unsigned op) { return m_not_ready.test(op); }
   protected:
@@ -981,11 +980,11 @@ private:
   // std::vector<unsigned> m_num_collector_units;
   // warp_inst_t **m_alu_port;
 
-  std::vector<input_port_t> m_in_ports;
   typedef std::map<unsigned /* collector set */,
                    std::vector<collector_unit_t*> /*collector sets*/>
       cu_sets_t;
 protected:
+  std::vector<input_port_t> m_in_ports;
   cu_sets_t m_cus;
   std::vector<dispatch_unit_t> m_dispatch_units;
 private:
@@ -1484,6 +1483,7 @@ class shader_core_config : public core_config {
     m_L1T_config.init(m_L1T_config.m_config_string, FuncCachePreferNone);
     m_L1C_config.init(m_L1C_config.m_config_string, FuncCachePreferNone);
     m_L1D_config.init(m_L1D_config.m_config_string, FuncCachePreferNone);
+    m_rfcache_config.init();
     gpgpu_cache_texl1_linesize = m_L1T_config.get_line_sz();
     gpgpu_cache_constl1_linesize = m_L1C_config.get_line_sz();
     m_valid = true;
@@ -1625,6 +1625,7 @@ class shader_core_config : public core_config {
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
   mutable std::vector<specialized_unit_params> m_specialized_unit;
   unsigned m_specialized_unit_num;
+  RFCacheConfig m_rfcache_config;
 };
 
 struct shader_core_stats_pod {
@@ -1921,6 +1922,7 @@ class shader_core_ctx : public core_t {
               bool reset_not_completed);
   void issue_block2core(class kernel_info_t &kernel);
 
+  void create_rfwithcache();
   void cache_flush();
   void cache_invalidate();
   void accept_fetch_response(mem_fetch *mf);
