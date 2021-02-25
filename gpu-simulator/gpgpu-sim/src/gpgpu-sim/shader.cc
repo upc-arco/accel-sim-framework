@@ -445,7 +445,7 @@ shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
       m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core,
                  config->max_barriers_per_cta, config->warp_size),
       m_active_warps(0),
-      m_dynamic_warp_id(0) {
+      m_dynamic_warp_id(0), m_operand_collector(config) {
   m_cluster = cluster;
   m_config = config;
   m_memory_config = mem_config;

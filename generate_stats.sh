@@ -1,0 +1,1 @@
+./util/job_launching/get_stats.py -N myTest | tee stats.csv

@@ -38,6 +38,9 @@ QV100_SASS:
 QV100_old:
     base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM7_QV100_old/gpgpusim.config"
 
+QV100_RFCache:
+    base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM7_QV100_RFCache/gpgpusim.config"
+
 # Fermi
 GTX480:
     base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM2_GTX480/gpgpusim.config"

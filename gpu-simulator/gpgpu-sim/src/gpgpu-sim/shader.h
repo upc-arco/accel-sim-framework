@@ -567,12 +567,12 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     m_shader = NULL;
     m_initialized = false;
   }
-  void add_cu_set(unsigned cu_set, unsigned num_cu, unsigned num_dispatch);
+  virtual void add_cu_set(unsigned cu_set, unsigned num_cu, unsigned num_dispatch);
   typedef std::vector<register_set *> port_vector_t;
   typedef std::vector<unsigned int> uint_vector_t;
   void add_port(port_vector_t &input, port_vector_t &ouput,
                 uint_vector_t cu_sets);
-  void init(unsigned num_banks, shader_core_ctx *shader);
+  virtual void init(unsigned num_banks, shader_core_ctx *shader);
 
   // modifiers
   bool writeback(warp_inst_t &warp);
@@ -599,14 +599,14 @@ class opndcoll_rfu_t {  // operand collector based register file unit
  private:
   void process_banks() { m_arbiter.reset_alloction(); }
 
-  void dispatch_ready_cu();
-  void allocate_cu(unsigned port);
   void allocate_reads();
 
   // types
-
+protected:
+  virtual void dispatch_ready_cu();
+  virtual void allocate_cu(unsigned port);
   class collector_unit_t;
-
+private:
   class op_t {
    public:
     op_t() { m_valid = false; }
@@ -840,6 +840,7 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     int **_request;
   };
 
+protected:
   class input_port_t {
    public:
     input_port_t(port_vector_t &input, port_vector_t &output,
@@ -852,7 +853,6 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     port_vector_t m_in, m_out;
     uint_vector_t m_cu_sets;
   };
-
   class collector_unit_t {
    public:
     // constructors
@@ -907,7 +907,7 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     unsigned m_num_banks_per_sched;
     bool m_sub_core_model;
   };
-
+protected:
   class dispatch_unit_t {
    public:
     dispatch_unit_t(std::vector<collector_unit_t> *cus) {
@@ -934,21 +934,23 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     unsigned m_last_cu;  // dispatch ready cu's rr
     unsigned m_next_cu;  // for initialization
   };
-
+  protected:
   // opndcoll_rfu_t data members
   bool m_initialized;
 
+  bool sub_core_model;
+  unsigned m_num_banks_per_sched;
+  unsigned m_bank_warp_shift;
+  unsigned m_num_warp_sceds;
+  unsigned m_warp_size;
+  unsigned m_num_banks;
+  arbiter_t m_arbiter;
+  shader_core_ctx *m_shader;
+private:
+
   unsigned m_num_collector_sets;
   // unsigned m_num_collectors;
-  unsigned m_num_banks;
-  unsigned m_bank_warp_shift;
-  unsigned m_warp_size;
-  std::vector<collector_unit_t *> m_cu;
-  arbiter_t m_arbiter;
 
-  unsigned m_num_banks_per_sched;
-  unsigned m_num_warp_sceds;
-  bool sub_core_model;
 
   // unsigned m_num_ports;
   // std::vector<warp_inst_t**> m_input;
@@ -956,17 +958,17 @@ class opndcoll_rfu_t {  // operand collector based register file unit
   // std::vector<unsigned> m_num_collector_units;
   // warp_inst_t **m_alu_port;
 
-  std::vector<input_port_t> m_in_ports;
   typedef std::map<unsigned /* collector set */,
                    std::vector<collector_unit_t> /*collector sets*/>
       cu_sets_t;
-  cu_sets_t m_cus;
-  std::vector<dispatch_unit_t> m_dispatch_units;
-
   // typedef std::map<warp_inst_t**/*port*/,dispatch_unit_t> port_to_du_t;
   // port_to_du_t                     m_dispatch_units;
   // std::map<warp_inst_t**,std::list<collector_unit_t*> > m_free_cu;
-  shader_core_ctx *m_shader;
+protected:
+  std::vector<input_port_t> m_in_ports;
+  cu_sets_t m_cus;
+  std::vector<collector_unit_t *> m_cu;
+  std::vector<dispatch_unit_t> m_dispatch_units;
 };
 
 class barrier_set_t {
@@ -1403,6 +1405,7 @@ struct specialized_unit_params {
   unsigned OC_EX_SPEC_ID;
 };
 
+#include "rfcache_config.h"
 class shader_core_config : public core_config {
  public:
   shader_core_config(gpgpu_context *ctx) : core_config(ctx) {
@@ -1479,6 +1482,8 @@ class shader_core_config : public core_config {
       } else
         break;  // we only accept continuous specialized_units, i.e., 1,2,3,4
     }
+
+    m_rfcache_config.init();
   }
   void reg_options(class OptionParser *opp);
   unsigned max_cta(const kernel_info_t &k) const;
@@ -1599,6 +1604,9 @@ class shader_core_config : public core_config {
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
   mutable std::vector<specialized_unit_params> m_specialized_unit;
   unsigned m_specialized_unit_num;
+
+  mutable RFCacheConfig m_rfcache_config;
+
 };
 
 struct shader_core_stats_pod {
@@ -1871,6 +1879,8 @@ class shader_core_mem_fetch_allocator : public mem_fetch_allocator {
   unsigned m_cluster_id;
   const memory_config *m_memory_config;
 };
+
+#include "rfwithcache.h"
 
 class shader_core_ctx : public core_t {
  public:
@@ -2219,7 +2229,7 @@ class shader_core_ctx : public core_t {
   ifetch_buffer_t m_inst_fetch_buffer;
   std::vector<register_set> m_pipeline_reg;
   Scoreboard *m_scoreboard;
-  opndcoll_rfu_t m_operand_collector;
+  RFWithCache m_operand_collector;
   int m_active_warps;
   std::vector<register_set *> m_specilized_dispatch_reg;
 

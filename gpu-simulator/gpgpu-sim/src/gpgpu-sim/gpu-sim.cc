@@ -249,6 +249,8 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                          " {<nsets>:<bsize>:<assoc>,<rep>:<wr>:<alloc>:<wr_"
                          "alloc>,<mshr>:<N>:<merge>,<mq> | none}",
                          "none");
+                         
+
   option_parser_register(opp, "-gpgpu_l1_banks", OPT_UINT32,
                          &m_L1D_config.l1_banks, "The number of L1 cache banks",
                          "1");
@@ -546,6 +548,8 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                            "OC_SPEC>:<OC_EX_SPEC>,<NAME>}",
                            "0,4,4,4,4,BRA");
   }
+
+  m_rfcache_config.reg_options(opp);
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {
