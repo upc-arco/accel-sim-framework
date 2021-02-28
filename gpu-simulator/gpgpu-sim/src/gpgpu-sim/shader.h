@@ -943,13 +943,11 @@ protected:
   unsigned m_num_banks_per_sched;
   friend class ResultBus;
   
-  unsigned m_num_collector_sets;
   // unsigned m_num_collectors;
   unsigned m_num_banks;
   unsigned m_bank_warp_shift;
   unsigned m_num_warp_sceds;
   unsigned m_warp_size;
-  unsigned m_num_banks;
   arbiter_t m_arbiter;
   shader_core_ctx *m_shader;
 private:
