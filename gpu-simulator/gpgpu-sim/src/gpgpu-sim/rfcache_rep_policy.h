@@ -4,12 +4,13 @@
 #include <functional>
 #include <list>
 #include <unordered_map>
-
-template <typename T>
+#include <optional>
+template <typename T, typename U = std::hash<T>>
 class ReplacementPolicy {
  public:
   ReplacementPolicy(std::size_t sz);
-  T refer(const T &el);
+  bool refer(const T &el, T &replaced_el);
+  bool get_replacement_candidate(const T &, T &);
   void lock(const T &el);
   void unlock(const T &el);
   bool can_allocate() const { return m_n_locked_entries < m_size; }
@@ -23,7 +24,7 @@ class ReplacementPolicy {
   size_t m_size;
   size_t m_n_locked_entries;
   std::list<T> m_order_q;
-  std::unordered_map<T, std::pair<bool, typename std::list<T>::iterator>>
+  std::unordered_map<T, std::pair<bool, typename std::list<T>::iterator>, U>
       m_refs;
 };
 

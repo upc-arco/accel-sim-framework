@@ -42,7 +42,7 @@
 #include <set>
 #include <utility>
 #include <vector>
-
+#include <memory>
 //#include "../cuda-sim/ptx.tab.h"
 
 #include "../abstract_hardware_model.h"
@@ -568,6 +568,9 @@ class opndcoll_rfu_t {  // operand collector based register file unit
     m_shader = NULL;
     m_initialized = false;
   }
+  virtual ~opndcoll_rfu_t() {
+    delete m_arbiter;
+  }
   virtual void add_cu_set(unsigned cu_set, unsigned num_cu, unsigned num_dispatch);
   typedef std::vector<register_set *> port_vector_t;
   typedef std::vector<unsigned int> uint_vector_t;
@@ -592,13 +595,13 @@ class opndcoll_rfu_t {  // operand collector based register file unit
       fprintf(fp, "   CU-%2u: ", n);
       m_cu[n]->dump(fp, m_shader);
     }
-    m_arbiter.dump(fp);
+    m_arbiter->dump(fp);
   }
 
   shader_core_ctx *shader_core() { return m_shader; }
 
  private:
-  void process_banks() { m_arbiter.reset_alloction(); }
+  void process_banks() { m_arbiter->reset_alloction(); }
 
   void allocate_reads();
 
@@ -607,7 +610,6 @@ protected:
   virtual void dispatch_ready_cu();
   virtual void allocate_cu(unsigned port);
   class collector_unit_t;
-private:
   class op_t {
    public:
     op_t() { m_valid = false; }
@@ -705,6 +707,7 @@ private:
     unsigned m_shced_id;  // scheduler id that has issued this inst
   };
 
+private:
   enum alloc_t {
     NO_ALLOC,
     READ_ALLOC,
@@ -746,6 +749,9 @@ private:
     op_t m_op;
   };
 
+
+
+protected:
   class arbiter_t {
    public:
     // constructors
@@ -800,7 +806,7 @@ private:
     // modifiers
     std::list<op_t> allocate_reads();
 
-    void add_read_requests(collector_unit_t *cu) {
+    virtual void add_read_requests(collector_unit_t *cu) {
       const op_t *src = cu->get_operands();
       for (unsigned i = 0; i < MAX_REG_OPERANDS * 2; i++) {
         const op_t &op = src[i];
@@ -825,12 +831,13 @@ private:
       for (unsigned b = 0; b < m_num_banks; b++) m_allocated_bank[b].reset();
     }
 
+   protected:
+    std::list<op_t> *m_queue;
    private:
     unsigned m_num_banks;
     unsigned m_num_collectors;
 
     allocation_t *m_allocated_bank;  // bank # -> register that wins
-    std::list<op_t> *m_queue;
 
     unsigned *
         m_allocator_rr_head;  // cu # -> next bank to check for request (rr-arb)
@@ -840,8 +847,6 @@ private:
     int *_outmatch;
     int **_request;
   };
-
-protected:
   class input_port_t {
    public:
     input_port_t(port_vector_t &input, port_vector_t &output,
@@ -884,34 +889,35 @@ protected:
     void init(unsigned n, unsigned num_banks, unsigned log2_warp_size,
               const core_config *config, opndcoll_rfu_t *rfu,
               bool m_sub_core_model, unsigned num_banks_per_sched);
-    bool allocate(register_set *pipeline_reg, register_set *output_reg);
+    virtual bool allocate(register_set *pipeline_reg, register_set *output_reg);
 
     void collect_operand(unsigned op) { m_not_ready.reset(op); }
     unsigned get_num_operands() const { return m_warp->get_num_operands(); }
     unsigned get_num_regs() const { return m_warp->get_num_regs(); }
     void dispatch();
     bool is_free() { return m_free; }
+   protected:
 
-   private:
     bool m_free;
-    unsigned m_cuid;  // collector unit hw id
-    unsigned m_warp_id;
-    warp_inst_t *m_warp;
+    std::bitset<MAX_REG_OPERANDS * 2> m_not_ready;
     register_set
         *m_output_register;  // pipeline register to issue to when ready
+    unsigned m_warp_id;
     op_t *m_src_op;
-    std::bitset<MAX_REG_OPERANDS * 2> m_not_ready;
     unsigned m_num_banks;
     unsigned m_bank_warp_shift;
+    bool m_sub_core_model;
+    unsigned m_num_banks_per_sched;
+    warp_inst_t *m_warp;
+   private:
+    unsigned m_cuid;  // collector unit hw id
     opndcoll_rfu_t *m_rfu;
 
-    unsigned m_num_banks_per_sched;
-    bool m_sub_core_model;
   };
 protected:
   class dispatch_unit_t {
    public:
-    dispatch_unit_t(std::vector<collector_unit_t> *cus) {
+    dispatch_unit_t(std::vector<std::shared_ptr<collector_unit_t>> *cus) {
       m_last_cu = 0;
       m_collector_units = cus;
       m_num_collectors = (*cus).size();
@@ -921,9 +927,9 @@ protected:
     collector_unit_t *find_ready() {
       for (unsigned n = 0; n < m_num_collectors; n++) {
         unsigned c = (m_last_cu + n + 1) % m_num_collectors;
-        if ((*m_collector_units)[c].ready()) {
+        if ((*m_collector_units)[c]->ready()) {
           m_last_cu = c;
-          return &((*m_collector_units)[c]);
+          return ((*m_collector_units)[c].get());
         }
       }
       return NULL;
@@ -931,11 +937,12 @@ protected:
 
    private:
     unsigned m_num_collectors;
-    std::vector<collector_unit_t> *m_collector_units;
+    std::vector<std::shared_ptr<collector_unit_t>> *m_collector_units;
     unsigned m_last_cu;  // dispatch ready cu's rr
     unsigned m_next_cu;  // for initialization
   };
   protected:
+  arbiter_t *m_arbiter;
   // opndcoll_rfu_t data members
   bool m_initialized;
 
@@ -948,7 +955,6 @@ protected:
   unsigned m_bank_warp_shift;
   unsigned m_num_warp_sceds;
   unsigned m_warp_size;
-  arbiter_t m_arbiter;
   shader_core_ctx *m_shader;
 private:
 
@@ -963,7 +969,7 @@ private:
   // warp_inst_t **m_alu_port;
 
   typedef std::map<unsigned /* collector set */,
-                   std::vector<collector_unit_t> /*collector sets*/>
+                   std::vector<std::shared_ptr<collector_unit_t>> /*collector sets*/>
       cu_sets_t;
   // typedef std::map<warp_inst_t**/*port*/,dispatch_unit_t> port_to_du_t;
   // port_to_du_t                     m_dispatch_units;
@@ -971,7 +977,7 @@ private:
 protected:
   std::vector<input_port_t> m_in_ports;
   cu_sets_t m_cus;
-  std::vector<collector_unit_t *> m_cu;
+  std::vector<std::shared_ptr<collector_unit_t>> m_cu;
   std::vector<dispatch_unit_t> m_dispatch_units;
 };
 

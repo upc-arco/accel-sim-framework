@@ -28,6 +28,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include "shader.h"
+#include <iostream>
 #include <float.h>
 #include <limits.h>
 #include <string.h>
@@ -3838,8 +3839,8 @@ void opndcoll_rfu_t::add_cu_set(unsigned set_id, unsigned num_cu,
   m_cus[set_id].reserve(num_cu);  // this is necessary to stop pointers in m_cu
                                   // from being invalid do to a resize;
   for (unsigned i = 0; i < num_cu; i++) {
-    m_cus[set_id].push_back(collector_unit_t());
-    m_cu.push_back(&m_cus[set_id].back());
+    m_cus[set_id].push_back(std::make_shared<collector_unit_t>());
+    m_cu.push_back(m_cus[set_id].back());
   }
   // for now each collector set gets dedicated dispatch units.
   for (unsigned i = 0; i < num_dispatch; i++) {
@@ -3862,7 +3863,9 @@ void opndcoll_rfu_t::add_port(port_vector_t &input, port_vector_t &output,
 
 void opndcoll_rfu_t::init(unsigned num_banks, shader_core_ctx *shader) {
   m_shader = shader;
-  m_arbiter.init(m_cu.size(), num_banks);
+  m_arbiter = new arbiter_t();
+
+  m_arbiter->init(m_cu.size(), num_banks);
   // for( unsigned n=0; n<m_num_ports;n++ )
   //    m_dispatch_units[m_output[n]].init( m_num_collector_units[n] );
   m_num_banks = num_banks;
@@ -3908,8 +3911,8 @@ bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
       unsigned bank = register_bank(reg_num, inst.warp_id(), m_num_banks,
                                     m_bank_warp_shift, sub_core_model,
                                     m_num_banks_per_sched, inst.get_schd_id());
-      if (m_arbiter.bank_idle(bank)) {
-        m_arbiter.allocate_bank_for_write(
+      if (m_arbiter->bank_idle(bank)) {
+        m_arbiter->allocate_bank_for_write(
             bank,
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
@@ -3977,13 +3980,13 @@ void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
     if ((*inp.m_in[i]).has_ready()) {
       // find a free cu
       for (unsigned j = 0; j < inp.m_cu_sets.size(); j++) {
-        std::vector<collector_unit_t> &cu_set = m_cus[inp.m_cu_sets[j]];
+        std::vector<std::shared_ptr<collector_unit_t>> &cu_set = m_cus[inp.m_cu_sets[j]];
         bool allocated = false;
         for (unsigned k = 0; k < cu_set.size(); k++) {
-          if (cu_set[k].is_free()) {
-            collector_unit_t *cu = &cu_set[k];
+          if (cu_set[k]->is_free()) {
+            std::shared_ptr<collector_unit_t> cu = cu_set[k];
             allocated = cu->allocate(inp.m_in[i], inp.m_out[i]);
-            m_arbiter.add_read_requests(cu);
+            m_arbiter->add_read_requests(cu.get());
             break;
           }
         }
@@ -3997,7 +4000,7 @@ void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
 
 void opndcoll_rfu_t::allocate_reads() {
   // process read requests that do not have conflicts
-  std::list<op_t> allocated = m_arbiter.allocate_reads();
+  std::list<op_t> allocated = m_arbiter->allocate_reads();
   std::map<unsigned, op_t> read_ops;
   for (std::list<op_t>::iterator r = allocated.begin(); r != allocated.end();
        r++) {
@@ -4007,7 +4010,7 @@ void opndcoll_rfu_t::allocate_reads() {
     unsigned bank =
         register_bank(reg, wid, m_num_banks, m_bank_warp_shift, sub_core_model,
                       m_num_banks_per_sched, rr.get_sid());
-    m_arbiter.allocate_for_read(bank, rr);
+    m_arbiter->allocate_for_read(bank, rr);
     read_ops[bank] = rr;
   }
   std::map<unsigned, op_t>::iterator r;
@@ -4072,6 +4075,7 @@ void opndcoll_rfu_t::collector_unit_t::init(unsigned n, unsigned num_banks,
 }
 
 bool opndcoll_rfu_t::collector_unit_t::allocate(register_set *pipeline_reg_set,
+    
                                                 register_set *output_reg_set) {
   assert(m_free);
   assert(m_not_ready.none());
