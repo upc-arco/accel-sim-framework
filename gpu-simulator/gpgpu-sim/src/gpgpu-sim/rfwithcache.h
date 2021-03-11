@@ -4,7 +4,7 @@
 #include "rfcache_rep_policy.h"
 #include "shader.h"
 
-using tag_t = std::pair<unsigned, unsigned>;
+using tag_t = std::pair<unsigned, unsigned>;  // <wid, regid>
 
 class RFWithCache : public opndcoll_rfu_t {
  public:
@@ -28,23 +28,50 @@ class RFWithCache : public opndcoll_rfu_t {
       return get_id() == r.get_id();
     }
     bool can_be_allocated(const warp_inst_t &inst) const;
-    bool allocate(register_set *pipeline_reg,
-                  register_set *output_reg) override;
+    bool allocate(register_set *, register_set *) override;
     bool is_not_ready(unsigned op_id) { return m_not_ready.test(op_id); }
     enum access_t {
       Hit,
       Miss,
     };
+    void collect_operand(unsigned op) override {
+      DDDPRINTF("Collect Operand <" << m_warp_id << ", "
+                                    << m_src_op[op].get_reg() << ">")
+      m_not_ready.reset(op);
+      auto wid = m_src_op[op].get_wid();
+      assert(m_warp_id == wid);
+      auto regid = m_src_op[op].get_reg();
+      tag_t tag(wid, regid);
+      m_rfcache.unlock(tag);
+    }
 
    private:
-   mutable unsigned counter = 0;
+    mutable unsigned counter = 0;
     std::vector<unsigned> get_src_ops(const warp_inst_t &inst) const;
     class RFCache {
      public:
       RFCache(std::size_t sz);
       access_t read_access(unsigned regid, unsigned wid);
+      void flush() {
+        /*remove everything in cache and fill buffer*/
+        assert(m_n_locked == 0);
+        m_n_available = m_size;
+        m_rpolicy.reset();
+        m_cache_table.clear();
+        m_fill_buffer.flush();
+      }
+      void cycle() { /* drain fill buffer */
+      }
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
+      void lock(const tag_t &tag);
+      void unlock(const tag_t &tag);
+      void dump();
+
      private:
+      std::size_t m_size;
+      std::size_t m_n_available;
+      std::size_t m_n_locked;
+      bool check_size() const;
       struct pair_hash {
         template <class T1, class T2>
         std::size_t operator()(const std::pair<T1, T2> &p) const {
@@ -53,20 +80,34 @@ class RFWithCache : public opndcoll_rfu_t {
           return h1 ^ h2;
         }
       };
-      std::size_t m_size;
       ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
       class CacheBlock {
        public:
-        bool m_lock;
-        RFWithCache::op_t m_data;
-        size_t m_op_idx;
+        void lock() { m_lock = true; }
+        void unlock() { m_lock = false; }
+        bool is_locked() { return m_lock; }
+        void dump(const tag_t &tag) {
+          std::stringstream ss;
+          ss << (m_lock ? 'L' : 'U');
+          DDDPRINTF("<" << tag.first << ", " << tag.second
+                        << ">: " << ss.str());
+        }
+        bool m_lock = false;
+        // bool m_lock;
+        // RFWithCache::op_t m_data;
+        // size_t m_op_idx;
       };
       using cache_table_t = std::unordered_map<tag_t, CacheBlock, pair_hash>;
       cache_table_t m_cache_table;
 
       class FillBuffer {
+       public:
+        bool find(const tag_t &tag) const;
+        bool has_pending_writes() const;
+        void flush() { m_buffer.clear(); }
+
        private:
-        std::list<std::pair<tag_t, RFWithCache::op_t>> m_buffer;
+        std::list<tag_t> m_buffer;
       };
       FillBuffer m_fill_buffer;
     };

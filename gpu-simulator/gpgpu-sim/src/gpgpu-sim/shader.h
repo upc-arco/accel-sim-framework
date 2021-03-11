@@ -891,7 +891,7 @@ protected:
               bool m_sub_core_model, unsigned num_banks_per_sched);
     virtual bool allocate(register_set *pipeline_reg, register_set *output_reg);
 
-    void collect_operand(unsigned op) { m_not_ready.reset(op); }
+    virtual void collect_operand(unsigned op) { m_not_ready.reset(op); }
     unsigned get_num_operands() const { return m_warp->get_num_operands(); }
     unsigned get_num_regs() const { return m_warp->get_num_regs(); }
     void dispatch();

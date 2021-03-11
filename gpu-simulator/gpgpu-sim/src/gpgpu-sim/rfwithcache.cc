@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <utility>
+
 #include "shader.h"
 
 RFWithCache::RFWithCache(const shader_core_config *config)
@@ -87,8 +89,8 @@ void RFWithCache::allocate_cu(unsigned port_num) {
       warp_inst_t **pipeline_reg = inp.m_in[i]->get_ready();
       warp_inst_t inst = **pipeline_reg;
       auto allocated = m_oc_allocator.allocate(inst);
-      if (allocated.first &&
-          allocated.second.allocate(inp.m_in[i], inp.m_out[i])) {
+      if (allocated.first) {
+        allocated.second.allocate(inp.m_in[i], inp.m_out[i]);
         m_arbiter->add_read_requests(&allocated.second);
       } else {
         DDDPRINTF("OCAllocator stalled")
@@ -188,67 +190,116 @@ void RFWithCache::OCAllocator::dump() {
 }
 
 RFWithCache::modified_collector_unit_t::RFCache::RFCache(std::size_t sz)
-    : m_rpolicy(sz), m_size(sz) {
+    : m_n_available{sz}, m_rpolicy(sz), m_size(sz), m_n_locked{0} {
   DDDPRINTF("Constructed Size: " << sz)
 }
 
 bool RFWithCache::modified_collector_unit_t::allocate(
     register_set *pipeline_reg_set, register_set *output_reg_set) {
   DDDPRINTF("New OC Allocation")
-
-  assert(m_free);
-  assert(m_not_ready.none());
-
-  // if there is no available instruction generate stall
   warp_inst_t **pipeline_reg = pipeline_reg_set->get_ready();
-  if (!(pipeline_reg) || ((*pipeline_reg))->empty()) {
-    return false;
-  }
-
-  auto &inst = **pipeline_reg;
+  assert((pipeline_reg) && !((*pipeline_reg)->empty()));
+  warp_inst_t &inst = **pipeline_reg;
   auto srcs = get_src_ops(inst);  // extract all source ops
 
-  if (m_rfcache.can_allocate(srcs, inst.warp_id())) {
-    m_free = false;
-    m_output_register = output_reg_set;
-    auto last_warp_id = m_warp_id;
-    m_warp_id = inst.warp_id();
-    if (m_warp_id != last_warp_id) {  // new warp allocated to this oc
-      DDDPRINTF("OC Preempted lwid: " << last_warp_id << " nwid: " << m_warp_id)
-      // flush everyting
-    }
-    unsigned op = 0;
-    for (auto src : srcs) {
-      auto access_status = m_rfcache.read_access(src, m_warp_id);
+  assert(m_rfcache.can_allocate(
+      srcs, inst.warp_id()));  // it should be accepted by cache
+  auto last_warp_id = m_warp_id;
+  m_warp_id = inst.warp_id();
+  if (m_warp_id != last_warp_id) {  // new warp allocated to this oc
+    DDDPRINTF("OC Preempted lwid: " << last_warp_id << " nwid: " << m_warp_id)
+    // flush everyting
+    m_rfcache.flush();
+  }
+  m_free = false;
+  m_output_register = output_reg_set;
+  unsigned op = 0;
+  for (auto src : srcs) {
+    auto access_status = m_rfcache.read_access(src, m_warp_id);
+    if (access_status ==
+        RFWithCache::modified_collector_unit_t::access_t::Miss) {
+      // only for missed values we need to wait
       m_src_op[op] =
           op_t(this, op, src, m_num_banks, m_bank_warp_shift, m_sub_core_model,
                m_num_banks_per_sched, inst.get_schd_id());
-      if (access_status ==
-          RFWithCache::modified_collector_unit_t::access_t::Miss) {
-        m_not_ready.set(op);
-      }
-      op++;
+      m_not_ready.set(op);
+    } else {
+      m_src_op[op] = op_t();
     }
-
-    pipeline_reg_set->move_out_to(m_warp);
-    return true;
+    op++;
   }
-  return false;
+
+  pipeline_reg_set->move_out_to(m_warp);
+  return true;
 }
 
 RFWithCache::modified_collector_unit_t::access_t
 RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
                                                              unsigned wid) {
-  return Miss;
+  tag_t tag(wid, regid);
+  if (m_cache_table.find(tag) == m_cache_table.end()) {
+    DDDPRINTF("Miss in cache table <" << tag.first << ", " << tag.second << ">")
+    // not present in the cache
+    if (m_fill_buffer.find(tag)) {
+      // present in fill_buffer
+      // everything in the fill buffer has data
+      DDDPRINTF("Hit in fill buffer <" << tag.first << ", " << tag.second
+                                       << ">")
+      return Hit;
+    }
+    // not present in cache and fill buffer
+    // allocate an entry
+    if (m_n_available > 0) {
+      // there is space in the table
+      m_cache_table.insert({tag, {}});
+      tag_t replaced_tag;
+      auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+      assert(!had_replacement);
+      m_n_available--;
+      // m_rpolicy.lock(tag);
+    } else {
+      // should replace an entry
+      tag_t replaced_tag;
+      bool had_replaced = m_rpolicy.refer(tag, replaced_tag);
+      assert(had_replaced);
+      DDDPRINTF("Replaced PREG: <" << replaced_tag.first << ", "
+                                   << replaced_tag.second << "> ")
+      assert(!m_cache_table[replaced_tag].is_locked());
+      m_cache_table.erase(replaced_tag);
+      m_cache_table.insert({tag, {}});
+    }
+    
+    lock(tag); // wait for data from banks
+    
+    assert(check_size());
+    dump();
+    return Miss;
+  } else {
+    // present in cache
+    DDDPRINTF("Hit in cache table <" << tag.first << ", " << tag.second << ">")
+    tag_t replaced_tag;
+    auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+    assert(!had_replacement);
+    if (m_cache_table[tag].is_locked()) {
+      // RF read pending
+      // do nothing
+    } else {
+      // should wait for data
+    }
+    dump();
+    return Hit;
+  }
 }
 
 void RFWithCache::modified_arbiter_t::add_read_requests(collector_unit_t *cu) {
-  DDDPRINTF("Modifed Arbiter add_read_requests")
   auto oc = static_cast<modified_collector_unit_t *>(cu);
   const op_t *src = oc->get_operands();
   for (unsigned i = 0; i < MAX_REG_OPERANDS * 2; i++) {
     const op_t &op = src[i];
-    if (op.valid() && oc->is_not_ready(i)) {
+    if (oc->is_not_ready(i)) {
+      DDDPRINTF("add_read_requests: <" << op.get_wid() << ", " << op.get_reg()
+                                       << ">")
+      assert(op.valid());
       unsigned bank = op.get_bank();
       m_queue[bank].push_back(op);
     }
@@ -258,30 +309,111 @@ void RFWithCache::modified_arbiter_t::add_read_requests(collector_unit_t *cu) {
 std::vector<unsigned> RFWithCache::modified_collector_unit_t::get_src_ops(
     const warp_inst_t &inst) const {
   std::vector<unsigned> srcs;
+  // get src ops and remove replicas
   for (unsigned op = 0; op < MAX_REG_OPERANDS; op++) {
     int reg_num = inst.arch_reg.src[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
-    if (reg_num >= 0) {                   // valid register
-      srcs.push_back(reg_num);
-    } else {
+    if (reg_num < 0) {                    // valid register
       m_src_op[op] = op_t();
+    } else {
+      srcs.push_back(reg_num);
     }
-    return srcs;
   }
+
+  return srcs;
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::can_allocate(
     const std::vector<unsigned> &ops, unsigned wid) const {
+  assert(m_size >=
+         ops.size());       // at least we need enough space for one instruction
+  assert(m_n_locked == 0);  // we allocate when all source ops had been read
+  auto available_tmp = m_n_available;
+
+  std::vector<unsigned> allocated_ops;
+
+  for (auto op : ops) {
+    tag_t tag(wid, op);
+    if (std::find(allocated_ops.begin(), allocated_ops.end(), op) !=
+        allocated_ops.end()) {
+      // already allocated op
+      continue;
+    }
+    if (m_cache_table.find(tag) != m_cache_table.end()) {
+      // already in the table
+      continue;
+    }
+    if (m_fill_buffer.find(tag)) {
+      // already in the fill buffer
+      continue;
+    }
+    // !table && !fill_buffer && !allocated
+    if (available_tmp != 0) {
+      // there is space in table for new entries (no replacement)
+      available_tmp--;
+    }
+    // there wasn't available space in table
+    // we replace entries
+    allocated_ops.push_back(op);
+  }
   return true;
 }
 
 bool RFWithCache::modified_collector_unit_t::can_be_allocated(
     const warp_inst_t &inst) const {
-
-  assert(!inst.empty());
-  assert(m_free);
-  assert(m_not_ready.none());
+  if (inst.empty() || !m_free || !m_not_ready.none()) return false;
   auto srcs = get_src_ops(inst);
   auto wid = inst.warp_id();
-  return counter++ % 8 == 1 ? true: false;
+  return m_rfcache.can_allocate(srcs, wid);
+}
+
+bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::find(
+    const tag_t &tag) const {
+  if (std::find_if(m_buffer.begin(), m_buffer.end(),
+                   [&tag](const std::pair<unsigned, unsigned> &p) -> bool {
+                     return (tag.first == p.first) && (tag.second == p.second);
+                   }) == m_buffer.end()) {
+    return false;
+  }
+  return true;
+}
+
+bool RFWithCache::modified_collector_unit_t::RFCache::check_size() const {
+  return (m_n_available <= m_size) && (m_n_locked <= m_size) &&
+         (m_n_locked + m_n_available <= m_size);
+}
+
+bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::
+    has_pending_writes() const {
+  return m_buffer.size() > 0;
+}
+
+void RFWithCache::modified_collector_unit_t::RFCache::lock(const tag_t &tag) {
+  assert(m_cache_table.find(tag) != m_cache_table.end());
+  assert(!m_cache_table[tag].is_locked());
+  m_cache_table[tag].lock();
+  m_rpolicy.lock(tag);
+  m_n_locked++;
+  assert(check_size());
+}
+
+void RFWithCache::modified_collector_unit_t::RFCache::unlock(const tag_t &tag) {
+  assert(m_cache_table.find(tag) != m_cache_table.end());
+  assert(m_cache_table[tag].is_locked());
+  m_cache_table[tag].unlock();
+  m_rpolicy.unlock(tag);
+  m_n_locked--;
+  assert(check_size());
+  dump();
+}
+
+void RFWithCache::modified_collector_unit_t::RFCache::dump() {
+  DDDPRINTF("Cache Table S: " << m_size << " A: " << m_n_available
+                              << " L: " << m_n_locked)
+  for (auto b : m_cache_table) {
+    auto &block = b.second;
+
+    block.dump(b.first);
+  }
+  m_rpolicy.dump();
 }

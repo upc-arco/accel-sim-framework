@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <functional>
 #include <list>
-#include <unordered_map>
 #include <optional>
+#include <unordered_map>
 template <typename T, typename U = std::hash<T>>
 class ReplacementPolicy {
  public:
@@ -14,6 +14,11 @@ class ReplacementPolicy {
   void lock(const T &el);
   void unlock(const T &el);
   bool can_allocate() const { return m_n_locked_entries < m_size; }
+  void reset() {
+    m_refs.clear();
+    m_order_q.clear();
+    assert(m_n_locked_entries == 0);
+  }
   void dump() const;
 
  private:
