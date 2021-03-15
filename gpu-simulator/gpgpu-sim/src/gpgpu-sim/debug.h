@@ -1,6 +1,5 @@
 #pragma once
 #include <iostream>
-#define DDDEBUG
 
 #ifdef DEBUG
 #define DPRINTF(x) std::cout << x << std::endl;

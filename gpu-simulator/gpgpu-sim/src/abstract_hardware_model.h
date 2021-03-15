@@ -998,6 +998,7 @@ class warp_inst_t : public inst_t {
     m_uid = 0;
     m_empty = true;
     m_config = NULL;
+    m_dst_oc_id = -1;
   }
   warp_inst_t(const core_config *config) {
     m_uid = 0;
@@ -1011,9 +1012,13 @@ class warp_inst_t : public inst_t {
     m_is_printf = false;
     m_is_cdp = 0;
     should_do_atomic = true;
+    m_dst_oc_id = -1;
   }
   virtual ~warp_inst_t() {}
 
+  void set_dst_oc_id(unsigned id) { assert(m_dst_oc_id == -1); m_dst_oc_id = id; }
+  unsigned get_dst_oc_id() const { return m_dst_oc_id; }
+  
   // modifiers
   void broadcast_barrier_reduction(const active_mask_t &access_mask);
   void do_atomic(bool forceDo = false);
@@ -1191,8 +1196,11 @@ class warp_inst_t : public inst_t {
   unsigned m_scheduler_id;  // the scheduler that issues this inst
 
   // Jin: cdp support
- public:
-  int m_is_cdp;
+  public:
+    int m_is_cdp;
+
+  private:
+    unsigned m_dst_oc_id;
 };
 
 void move_warp(warp_inst_t *&dst, warp_inst_t *&src);

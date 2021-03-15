@@ -13,9 +13,26 @@ class RFWithCache : public opndcoll_rfu_t {
   void init(unsigned num_banks, shader_core_ctx *shader) override;
   virtual void allocate_cu(unsigned port_num);
   virtual void dispatch_ready_cu();
-
+  virtual void step() override;
+  virtual bool writeback(warp_inst_t &warp);
+  void cache_cycle();
+  void process_writes();
+  void process_fill_buffer();
  private:
   const RFCacheConfig &m_rfcache_config;
+  
+  class WriteReqs { 
+    public:
+      void push(unsigned oc_id, unsigned wid, unsigned regid);
+      bool has_req(unsigned oc_id) const;
+      void flush(unsigned oc_id);
+      std::pair<unsigned, unsigned> pop(unsigned oc_id);
+      size_t size() const { return m_size; }
+    private:
+      size_t m_size;
+      std::unordered_map<unsigned, std::list<std::pair<unsigned, unsigned>>> m_write_reqs; // <ocid, list<wid, reg_id> last cycle write reqs
+  };
+  WriteReqs m_write_reqs;
   class modified_arbiter_t : public arbiter_t {
    public:
     virtual void add_read_requests(collector_unit_t *cu);
@@ -34,17 +51,9 @@ class RFWithCache : public opndcoll_rfu_t {
       Hit,
       Miss,
     };
-    void collect_operand(unsigned op) override {
-      DDDPRINTF("Collect Operand <" << m_warp_id << ", "
-                                    << m_src_op[op].get_reg() << ">")
-      m_not_ready.reset(op);
-      auto wid = m_src_op[op].get_wid();
-      assert(m_warp_id == wid);
-      auto regid = m_src_op[op].get_reg();
-      tag_t tag(wid, regid);
-      m_rfcache.unlock(tag);
-    }
-
+    void collect_operand(unsigned op) override;
+    void process_write(unsigned regid);
+    void process_fill_buffer();
    private:
     mutable unsigned counter = 0;
     std::vector<unsigned> get_src_ops(const warp_inst_t &inst) const;
@@ -52,21 +61,13 @@ class RFWithCache : public opndcoll_rfu_t {
      public:
       RFCache(std::size_t sz);
       access_t read_access(unsigned regid, unsigned wid);
-      void flush() {
-        /*remove everything in cache and fill buffer*/
-        assert(m_n_locked == 0);
-        m_n_available = m_size;
-        m_rpolicy.reset();
-        m_cache_table.clear();
-        m_fill_buffer.flush();
-      }
-      void cycle() { /* drain fill buffer */
-      }
+      void flush();
+      void write_access(unsigned wid, unsigned regid);
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
       void lock(const tag_t &tag);
       void unlock(const tag_t &tag);
       void dump();
-
+      void process_fill_buffer();
      private:
       std::size_t m_size;
       std::size_t m_n_available;
@@ -104,9 +105,12 @@ class RFWithCache : public opndcoll_rfu_t {
        public:
         bool find(const tag_t &tag) const;
         bool has_pending_writes() const;
-        void flush() { m_buffer.clear(); }
-
+        void flush() { m_buffer.clear(); m_redundant_write_tracker.clear();}
+        void dump();
+        bool push_back(const tag_t &tag);
+        bool pop_front(tag_t &tag);
        private:
+        std::unordered_map<tag_t, unsigned, pair_hash> m_redundant_write_tracker;
         std::list<tag_t> m_buffer;
       };
       FillBuffer m_fill_buffer;

@@ -579,9 +579,9 @@ class opndcoll_rfu_t {  // operand collector based register file unit
   virtual void init(unsigned num_banks, shader_core_ctx *shader);
 
   // modifiers
-  bool writeback(warp_inst_t &warp);
+  virtual bool writeback(warp_inst_t &warp);
 
-  void step() {
+  virtual void step() {
     dispatch_ready_cu();
     allocate_reads();
     for (unsigned p = 0; p < m_in_ports.size(); p++) allocate_cu(p);
@@ -600,13 +600,10 @@ class opndcoll_rfu_t {  // operand collector based register file unit
 
   shader_core_ctx *shader_core() { return m_shader; }
 
- private:
-  void process_banks() { m_arbiter->reset_alloction(); }
-
-  void allocate_reads();
-
   // types
 protected:
+  void process_banks() { m_arbiter->reset_alloction(); }
+  void allocate_reads();
   virtual void dispatch_ready_cu();
   virtual void allocate_cu(unsigned port);
   class collector_unit_t;
@@ -902,7 +899,7 @@ protected:
     std::bitset<MAX_REG_OPERANDS * 2> m_not_ready;
     register_set
         *m_output_register;  // pipeline register to issue to when ready
-    unsigned m_warp_id;
+    unsigned m_warp_id; //collector unit warp id
     op_t *m_src_op;
     unsigned m_num_banks;
     unsigned m_bank_warp_shift;
