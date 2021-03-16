@@ -8,7 +8,7 @@ using tag_t = std::pair<unsigned, unsigned>;  // <wid, regid>
 
 class RFWithCache : public opndcoll_rfu_t {
  public:
-  RFWithCache(const shader_core_config *config);
+  RFWithCache(const shader_core_config *config, RFCacheStats &rfcache_stats, const shader_core_ctx *shader);
   void add_cu_set(unsigned cu_set, unsigned num_cu, unsigned num_dispatch);
   void init(unsigned num_banks, shader_core_ctx *shader) override;
   virtual void allocate_cu(unsigned port_num);
@@ -19,6 +19,8 @@ class RFWithCache : public opndcoll_rfu_t {
   void process_writes();
   void process_fill_buffer();
  private:
+  const shader_core_ctx *m_shdr;
+  RFCacheStats &m_rfcache_stats;
   const RFCacheConfig &m_rfcache_config;
   
   class WriteReqs { 
@@ -40,7 +42,7 @@ class RFWithCache : public opndcoll_rfu_t {
   class modified_collector_unit_t : public collector_unit_t {
    public:
     modified_collector_unit_t() = delete;
-    modified_collector_unit_t(std::size_t sz);
+    modified_collector_unit_t(std::size_t sz, unsigned sid, unsigned num_oc_per_core, unsigned oc_id, RFCacheStats &rfcache_stats);
     bool operator==(const collector_unit_t &r) {
       return get_id() == r.get_id();
     }
@@ -55,11 +57,11 @@ class RFWithCache : public opndcoll_rfu_t {
     void process_write(unsigned regid);
     void process_fill_buffer();
    private:
-    mutable unsigned counter = 0;
+    unsigned m_sid;
     std::vector<unsigned> get_src_ops(const warp_inst_t &inst) const;
     class RFCache {
      public:
-      RFCache(std::size_t sz);
+      RFCache(std::size_t sz, RFCacheStats &rfcache_stats, unsigned global_oc_id);
       access_t read_access(unsigned regid, unsigned wid);
       void flush();
       void write_access(unsigned wid, unsigned regid);
@@ -69,6 +71,8 @@ class RFWithCache : public opndcoll_rfu_t {
       void dump();
       void process_fill_buffer();
      private:
+      unsigned m_global_oc_id;
+      RFCacheStats &m_rfcache_stats;
       std::size_t m_size;
       std::size_t m_n_available;
       std::size_t m_n_locked;
@@ -109,6 +113,7 @@ class RFWithCache : public opndcoll_rfu_t {
         void dump();
         bool push_back(const tag_t &tag);
         bool pop_front(tag_t &tag);
+        size_t size() const { return m_buffer.size(); }
        private:
         std::unordered_map<tag_t, unsigned, pair_hash> m_redundant_write_tracker;
         std::list<tag_t> m_buffer;

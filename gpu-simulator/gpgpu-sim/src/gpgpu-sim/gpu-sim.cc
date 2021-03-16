@@ -1318,7 +1318,7 @@ void gpgpu_sim::gpu_print_stat() {
                                     "Total_core_cache_fail_stats_breakdown");
   shader_print_scheduler_stat(stdout, false);
 
-  m_shader_stats->print(stdout);
+  m_shader_stats->print(stdout, gpu_tot_sim_cycle, gpu_sim_cycle);
 #ifdef GPGPUSIM_POWER_MODEL
   if (m_config.g_power_simulation_enabled) {
     m_gpgpusim_wrapper->print_power_kernel_stats(

@@ -448,7 +448,7 @@ shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
       m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core,
                  config->max_barriers_per_cta, config->warp_size),
       m_active_warps(0),
-      m_dynamic_warp_id(0), m_operand_collector(config) {
+      m_dynamic_warp_id(0), m_operand_collector(config, stats->m_rfcache_stats, this) {
   m_cluster = cluster;
   m_config = config;
   m_memory_config = mem_config;
@@ -582,7 +582,7 @@ float shader_core_ctx::get_current_occupancy(unsigned long long &active,
   }
 }
 
-void shader_core_stats::print(FILE *fout) const {
+void shader_core_stats::print(FILE *fout, unsigned long long gpu_tot_sim_cycle, unsigned long long gpu_sim_cycle) const {
   unsigned long long thread_icount_uarch = 0;
   unsigned long long warp_icount_uarch = 0;
 
@@ -590,6 +590,10 @@ void shader_core_stats::print(FILE *fout) const {
     thread_icount_uarch += m_num_sim_insn[i];
     warp_icount_uarch += m_num_sim_winsn[i];
   }
+  
+  auto tot_num_ocs = m_config->gpgpu_operand_collector_num_units_gen * m_config->num_shader();
+  m_rfcache_stats.print(gpu_tot_sim_cycle, gpu_sim_cycle, tot_num_ocs);
+
   fprintf(fout, "gpgpu_n_tot_thrd_icount = %lld\n", thread_icount_uarch);
   fprintf(fout, "gpgpu_n_tot_w_icount = %lld\n", warp_icount_uarch);
 
@@ -4065,7 +4069,7 @@ void opndcoll_rfu_t::collector_unit_t::init(unsigned n, unsigned num_banks,
                                             bool sub_core_model,
                                             unsigned banks_per_sched) {
   m_rfu = rfu;
-  m_cuid = n;
+  //m_cuid = n;
   m_num_banks = num_banks;
   assert(m_warp == NULL);
   m_warp = new warp_inst_t(config);

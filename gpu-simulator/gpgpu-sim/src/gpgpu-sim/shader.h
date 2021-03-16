@@ -55,6 +55,7 @@
 #include "stats.h"
 #include "traffic_breakdown.h"
 #include "result-bus.h"
+#include "rfcache_stats.h"
 
 #define NO_OP_FLAG 0xFF
 
@@ -906,8 +907,8 @@ protected:
     bool m_sub_core_model;
     unsigned m_num_banks_per_sched;
     warp_inst_t *m_warp;
-   private:
     unsigned m_cuid;  // collector unit hw id
+   private:
     opndcoll_rfu_t *m_rfu;
 
   };
@@ -1829,7 +1830,7 @@ class shader_core_stats : public shader_core_stats_pod {
 
   void visualizer_print(gzFile visualizer_file);
 
-  void print(FILE *fout) const;
+  void print(FILE *fout, unsigned long long gpu_tot_sim_cycle, unsigned long long gpu_sim_cycle) const;
 
   const std::vector<std::vector<unsigned>> &get_dynamic_warp_issue() const {
     return m_shader_dynamic_warp_issue_distro;
@@ -1838,6 +1839,8 @@ class shader_core_stats : public shader_core_stats_pod {
   const std::vector<std::vector<unsigned>> &get_warp_slot_issue() const {
     return m_shader_warp_slot_issue_distro;
   }
+  
+  RFCacheStats m_rfcache_stats;
 
  private:
   const shader_core_config *m_config;

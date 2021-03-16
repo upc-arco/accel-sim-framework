@@ -3,15 +3,21 @@
 
 #include "shader.h"
 
-RFWithCache::RFWithCache(const shader_core_config *config)
+RFWithCache::RFWithCache(const shader_core_config *config,
+                         RFCacheStats &rfcache_stats,
+                         const shader_core_ctx *shader)
     : m_rfcache_config(config->m_rfcache_config),
       m_oc_allocator(config->gpgpu_operand_collector_num_units_gen,
-                     config->max_warps_per_shader) {}
+                     config->max_warps_per_shader),
+      m_rfcache_stats(rfcache_stats),
+      m_shdr(shader) {}
 
 RFWithCache::modified_collector_unit_t::modified_collector_unit_t(
-    std::size_t sz)
-    : m_rfcache(sz) {
+    std::size_t sz, unsigned sid, unsigned num_oc_per_core, unsigned oc_id,
+    RFCacheStats &rfcache_stats)
+    : m_rfcache(sz, rfcache_stats, sid * num_oc_per_core + oc_id), m_sid(sid) {
   DPRINTF("modified collector unit constructed")
+  opndcoll_rfu_t::collector_unit_t::m_cuid = oc_id;
 }
 
 void RFWithCache::add_cu_set(unsigned set_id, unsigned num_cu,
@@ -19,8 +25,10 @@ void RFWithCache::add_cu_set(unsigned set_id, unsigned num_cu,
   m_cus[set_id].reserve(num_cu);  // this is necessary to stop pointers in m_cu
                                   // from being invalid do to a resize;
   for (unsigned i = 0; i < num_cu; i++) {
-    m_cus[set_id].push_back(
-        std::make_shared<modified_collector_unit_t>(m_rfcache_config.size()));
+    m_cus[set_id].push_back(std::make_shared<modified_collector_unit_t>(
+        m_rfcache_config.size(), m_shdr->get_sid(),
+        m_shdr->get_config()->gpgpu_operand_collector_num_units_gen, i,
+        m_rfcache_stats));
     m_cu.push_back(m_cus[set_id].back());
   }
   // for now each collector set gets dedicated dispatch units.
@@ -189,8 +197,14 @@ void RFWithCache::OCAllocator::dump() {
   DDPRINTF(ss.str());
 }
 
-RFWithCache::modified_collector_unit_t::RFCache::RFCache(std::size_t sz)
-    : m_n_available{sz}, m_rpolicy(sz), m_size(sz), m_n_locked{0} {
+RFWithCache::modified_collector_unit_t::RFCache::RFCache(
+    std::size_t sz, RFCacheStats &rfcache_stats, unsigned global_oc_id)
+    : m_n_available{sz},
+      m_rpolicy(sz),
+      m_size(sz),
+      m_n_locked{0},
+      m_rfcache_stats(rfcache_stats),
+      m_global_oc_id(global_oc_id) {
   DDDPRINTF("Constructed Size: " << sz)
 }
 
@@ -248,6 +262,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       // everything in the fill buffer has data
       DDDPRINTF("Hit in fill buffer <" << tag.first << ", " << tag.second
                                        << ">")
+      m_rfcache_stats.inc_read_hits(m_global_oc_id);
       return Hit;
     }
     // not present in cache and fill buffer
@@ -276,6 +291,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
 
     assert(check_size());
     dump();
+    m_rfcache_stats.inc_read_misses(m_global_oc_id);
     return Miss;
   } else {
     // present in cache
@@ -290,6 +306,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       // should wait for data
     }
     dump();
+    m_rfcache_stats.inc_read_hits(m_global_oc_id);
     return Hit;
   }
 }
@@ -471,11 +488,16 @@ void RFWithCache::process_writes() {
   for (auto cu : m_cu) {
     auto oc = static_cast<modified_collector_unit_t *>(cu.get());
     auto oc_id = cu->get_id();
+    auto global_oc_id =
+        m_shdr->get_config()->gpgpu_operand_collector_num_units_gen *
+            m_shdr->get_sid() +
+        oc_id;
     auto curr_wid = oc->get_warp_id();
     size_t oc_wreqs = 0;
     bool wreq_to_preempted_oc = false;
     while (m_write_reqs.has_req(oc_id)) {
       oc_wreqs++;
+      m_rfcache_stats.inc_writes(m_shdr->get_sid());
       auto req = m_write_reqs.pop(oc_id);
       if (req.first != curr_wid) {
         wreq_to_preempted_oc = true;
@@ -650,6 +672,7 @@ void RFWithCache::process_fill_buffer() {
 void RFWithCache::modified_collector_unit_t::process_fill_buffer() {
   DDDPRINTF("Process Fill Buffer in OC<" << get_id() << ">")
   m_rfcache.process_fill_buffer();
+  
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
@@ -691,6 +714,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
     // there is no pending write in the fill buffer
   }
   assert(check_size());
+  m_rfcache_stats.reg_fill_buffer_size(m_fill_buffer.size());
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::pop_front(
