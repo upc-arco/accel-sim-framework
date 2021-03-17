@@ -124,25 +124,18 @@ class RFWithCache : public opndcoll_rfu_t {
   };
   class OCAllocator {
    public:
-    OCAllocator(std::size_t num_ocs, std::size_t num_warps_per_shader);
-    void add_oc(modified_collector_unit_t &);
-    std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate(
+    OCAllocator(std::size_t num_warps_per_shader);
+    void add_oc(modified_collector_unit_t *oc);
+    std::pair<bool, RFWithCache::modified_collector_unit_t *> allocate(
         const warp_inst_t &inst);
-    void dispatch(unsigned);
+    void dispatch(unsigned wid);
     void dump();
 
    private:
-    size_t m_n_available;
-    size_t m_n_ocs;
     size_t m_n_warps_per_shader;
-    struct per_oc_info {
-      per_oc_info(modified_collector_unit_t &oc, bool available)
-          : m_oc(oc), m_availble(available) {}
-      modified_collector_unit_t &m_oc;
-      bool m_availble;
-    };
-    std::unordered_map<unsigned, per_oc_info> m_info_table;
-    ReplacementPolicy<unsigned> m_lru_policy;
+    std::vector<RFWithCache::modified_collector_unit_t *> m_ocs;
+    std::vector<bool> m_free_ocs;
   };
+
   OCAllocator m_oc_allocator;
 };

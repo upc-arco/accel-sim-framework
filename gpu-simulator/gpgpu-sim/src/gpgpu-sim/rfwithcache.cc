@@ -7,8 +7,7 @@ RFWithCache::RFWithCache(const shader_core_config *config,
                          RFCacheStats &rfcache_stats,
                          const shader_core_ctx *shader)
     : m_rfcache_config(config->m_rfcache_config),
-      m_oc_allocator(config->gpgpu_operand_collector_num_units_gen,
-                     config->max_warps_per_shader),
+      m_oc_allocator(config->max_warps_per_shader),
       m_rfcache_stats(rfcache_stats),
       m_shdr(shader) {}
 
@@ -37,28 +36,16 @@ void RFWithCache::add_cu_set(unsigned set_id, unsigned num_cu,
   }
 }
 
-RFWithCache::OCAllocator::OCAllocator(std::size_t num_ocs,
-                                      std::size_t num_warps_per_shader)
-    : m_n_ocs{num_ocs},
-      m_lru_policy{num_ocs},
-      m_n_warps_per_shader{num_warps_per_shader} {
-  DDPRINTF("OCAllocator Constructed Size:" << num_ocs)
+RFWithCache::OCAllocator::OCAllocator(std::size_t num_warps_per_shader)
+    : m_n_warps_per_shader{num_warps_per_shader},
+      m_free_ocs(num_warps_per_shader, true) {
+  D5PRINTF("OCAllocator Constructed Size:" << num_warps_per_shader)
 }
 
 void RFWithCache::OCAllocator::add_oc(
-    RFWithCache::modified_collector_unit_t &oc) {
-  DDPRINTF("OCAllocator Add OC : " << oc.get_id())
-  m_n_available++;
-  assert(m_n_available <= m_n_ocs);
-  assert(m_n_warps_per_shader + m_n_ocs - 1 < -1U);
-  unsigned invalid_unique_wid =
-      -m_n_available;  // initialized info table with invalid ids
-  m_info_table.insert(
-      {invalid_unique_wid,
-       {oc, true}});  // initialize ref to oc and make it available
-  unsigned replaced_wid;
-  auto has_replacement = m_lru_policy.refer(invalid_unique_wid, replaced_wid);
-  assert(!has_replacement);
+    RFWithCache::modified_collector_unit_t *oc) {
+  D5PRINTF("OCAllocator Add OC : " << oc->get_id())
+  m_ocs.push_back(oc);
 }
 
 void RFWithCache::init(unsigned num_banks, shader_core_ctx *shader) {
@@ -84,7 +71,7 @@ void RFWithCache::init(unsigned num_banks, shader_core_ctx *shader) {
     m_cu[j]->init(j, num_banks, m_bank_warp_shift, shader->get_config(), this,
                   sub_core_model, m_num_banks_per_sched);
     m_oc_allocator.add_oc(
-        *static_cast<RFWithCache::modified_collector_unit_t *>(m_cu[j].get()));
+        static_cast<RFWithCache::modified_collector_unit_t *>(m_cu[j].get()));
   }
   m_initialized = true;
 }
@@ -98,70 +85,29 @@ void RFWithCache::allocate_cu(unsigned port_num) {
       warp_inst_t inst = **pipeline_reg;
       auto allocated = m_oc_allocator.allocate(inst);
       if (allocated.first) {
-        allocated.second.allocate(inp.m_in[i], inp.m_out[i]);
-        m_arbiter->add_read_requests(&allocated.second);
+        allocated.second->allocate(inp.m_in[i], inp.m_out[i]);
+        m_arbiter->add_read_requests(allocated.second);
       } else {
-        DDDPRINTF("OCAllocator stalled")
+        D5PRINTF("OCAllocator stalled")
       }
+      m_oc_allocator.dump();
       break;  // can only service a single input, if it failed it will fail for
               // others.
     }
   }
 }
 
-std::pair<bool, RFWithCache::modified_collector_unit_t &>
+std::pair<bool, RFWithCache::modified_collector_unit_t *>
 RFWithCache::OCAllocator::allocate(const warp_inst_t &inst) {
-  if (m_n_available == 0) {
-    return std::pair<bool, modified_collector_unit_t &>{
-        false, m_info_table.begin()->second.m_oc};
-  }
+  assert(m_ocs.size() == m_n_warps_per_shader);
   auto wid = inst.warp_id();
-  if (m_info_table.find(wid) == m_info_table.end()) {  // warp_id is new
-    unsigned replaced_candidate_wid;
-    bool has_replacement =
-        m_lru_policy.get_replacement_candidate(wid, replaced_candidate_wid);
-    assert(has_replacement);
-    auto &replaced_oc = m_info_table.find(replaced_candidate_wid)->second.m_oc;
-
-    if (!replaced_oc.can_be_allocated(inst)) {
-      return std::pair<bool, modified_collector_unit_t &>{
-          false, m_info_table.begin()->second.m_oc};
-    }
-
-    unsigned replaced_wid;
-    auto had_replacement = m_lru_policy.refer(wid, replaced_wid);
-    assert(had_replacement && (replaced_wid == replaced_candidate_wid));
-    auto replaced_info_iter = m_info_table.find(replaced_wid);
-    assert(replaced_info_iter != m_info_table.end() &&
-           replaced_info_iter->second.m_availble == true);
-
-    m_info_table.insert({wid, {replaced_info_iter->second.m_oc, false}});
-    m_info_table.erase(replaced_info_iter);
-    auto new_element_iter = m_info_table.find(wid);
-    new_element_iter->second.m_availble = false;
-    m_n_available--;
-    m_lru_policy.lock(wid);
-    dump();
-    return std::pair<bool, modified_collector_unit_t &>(
-        true, new_element_iter->second.m_oc);
-  } else {
-    auto iter = m_info_table.find(wid);
-
-    if (iter->second.m_availble == false ||
-        !(iter->second.m_oc.can_be_allocated(inst))) {
-      return std::pair<bool, modified_collector_unit_t &>(false,
-                                                          iter->second.m_oc);
-    }
-    iter->second.m_availble = false;
-    m_n_available--;
-    unsigned replaced_wid;
-    auto had_replacement = m_lru_policy.refer(wid, replaced_wid);
-    assert(!had_replacement);
-    m_lru_policy.lock(wid);
-    dump();
-    return std::pair<bool, modified_collector_unit_t &>(true,
-                                                        iter->second.m_oc);
+  assert(m_free_ocs[wid] == m_ocs[wid]->is_free());
+  if (m_free_ocs[wid]) {
+    D5PRINTF("Allocate OC " << wid)
+    m_free_ocs[wid] = false; // allocate the free oc
+    return {true, m_ocs[wid]};
   }
+  return {false, nullptr};
 }
 
 void RFWithCache::dispatch_ready_cu() {
@@ -176,25 +122,36 @@ void RFWithCache::dispatch_ready_cu() {
 }
 
 void RFWithCache::OCAllocator::dispatch(unsigned wid) {
-  DDPRINTF("OCAllocator Dispatch " << wid)
-  assert(m_n_available < m_n_ocs);
-  m_n_available++;
-  auto iter = m_info_table.find(wid);
-  assert(iter != m_info_table.end() && iter->second.m_availble == false);
-  iter->second.m_availble = true;
+  assert(m_ocs.size() == m_n_warps_per_shader);
+  assert(m_free_ocs.size() == m_ocs.size());
+
+  D5PRINTF("OCAllocator Dispatch " << wid)
+  // free the oc for next instructions
+  m_free_ocs[wid] = true;
+  assert(m_ocs[wid]->is_free());
   dump();
-  m_lru_policy.unlock(wid);
 }
 
 void RFWithCache::OCAllocator::dump() {
-  DDPRINTF("OCAllocator Dump")
+  assert(m_ocs.size() == m_n_warps_per_shader);
+  assert(m_free_ocs.size() == m_ocs.size());
+  D5PRINTF("OCAllocator Dump")
   std::stringstream ss;
-  ss << "Info Table\n";
-  for (auto el : m_info_table) {
-    ss << "<" << el.first << ", " << (el.second.m_availble ? 'F' : 'O') << ", "
-       << el.second.m_oc.get_id() << "> ";
+  bool flag = true;
+  size_t wid = 0;
+  for (auto oc : m_free_ocs) {
+    assert(oc == m_ocs[wid]->is_free());
+    if (oc == false) {
+      if (flag) {
+        D5PRINTF("Occupied OCs:")
+        flag = false;
+      }
+      ss << m_ocs[wid]->get_id() << " ";
+    }
+    wid++;
   }
-  DDPRINTF(ss.str());
+  ss << std::endl;
+  D5PRINTF(ss.str())
 }
 
 RFWithCache::modified_collector_unit_t::RFCache::RFCache(
@@ -672,7 +629,6 @@ void RFWithCache::process_fill_buffer() {
 void RFWithCache::modified_collector_unit_t::process_fill_buffer() {
   DDDPRINTF("Process Fill Buffer in OC<" << get_id() << ">")
   m_rfcache.process_fill_buffer();
-  
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {

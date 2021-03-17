@@ -12,11 +12,20 @@
 #else
 #define DPRINTF(x) 
 #endif
+
+
+#ifdef D5EBUG
+#define D5PRINTF(x) std::cout << x << std::endl;
+#else
+#define D5PRINTF(x) 
+#endif
+
 #ifdef DDEBUG
 #define DDPRINTF(x) std::cout << x << std::endl;
 #else
 #define DDPRINTF(x) 
 #endif
+
 #ifdef DDDEBUG
 #define DDDPRINTF(x) std::cout << "RFCache: " << x << std::endl;
 #else
