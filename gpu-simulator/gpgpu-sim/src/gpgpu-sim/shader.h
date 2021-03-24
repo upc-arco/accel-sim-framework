@@ -322,6 +322,7 @@ enum concrete_scheduler {
   CONCRETE_SCHEDULER_TWO_LEVEL_ACTIVE,
   CONCRETE_SCHEDULER_WARP_LIMITING,
   CONCRETE_SCHEDULER_OLDEST_FIRST,
+  CONCRETE_SCHEDULER_GTOCTO, // gready then oldest in cache then oldest
   NUM_CONCRETE_SCHEDULERS
 };
 
@@ -361,7 +362,7 @@ class scheduler_unit {  // this can be copied freely, so can be used in std
   // all the derived schedulers.  The scheduler's behaviour can be
   // modified by changing the contents of the m_next_cycle_prioritized_warps
   // list.
-  void cycle();
+  virtual void cycle();
 
   // These are some common ordering fucntions that the
   // higher order schedulers can take advantage of
@@ -471,6 +472,44 @@ class gto_scheduler : public scheduler_unit {
   }
 };
 
+class GTOCTOScheduler : public scheduler_unit {
+ public:
+  GTOCTOScheduler(shader_core_stats *stats, shader_core_ctx *shader,
+                  Scoreboard *scoreboard, simt_stack **simt,
+                  std::vector<shd_warp_t *> *warp, register_set *sp_out,
+                  register_set *dp_out, register_set *sfu_out,
+                  register_set *int_out, register_set *tensor_core_out,
+                  std::vector<register_set *> &spec_cores_out,
+                  register_set *mem_out, int id)
+      : scheduler_unit(stats, shader, scoreboard, simt, warp, sp_out, dp_out,
+                       sfu_out, int_out, tensor_core_out, spec_cores_out,
+                       mem_out, id) {
+    std::stringstream ss;
+    ss << "Constructed Scheduler " << id << " SP: " << sp_out->get_size()
+    << " DP: " << dp_out->get_size() << " SFU: " << sfu_out->get_size() << " INT: " << int_out->get_size()
+    << " TENSOR: " << tensor_core_out->get_size() << " MEM: "  << mem_out->get_size();
+    unsigned i = 0;
+    for (auto spec: spec_cores_out)
+    {
+      ss << " Spec" << i << ": " << spec->get_size(); 
+      i++;
+    }
+    D6PRINTF(ss.str())
+  }
+  void allocate_oc(unsigned last_wid, unsigned new_wid);
+  virtual ~GTOCTOScheduler() {}
+  virtual void order_warps();
+  bool sort_warps(shd_warp_t *lhs,shd_warp_t *rhs);
+  virtual void done_adding_supervised_warps() {
+    m_last_supervised_issued = m_supervised_warps.begin();
+  }
+  void cycle() override;
+  void dump();
+  void add_supervised_warp_id(int i);
+  bool is_in_ocs(unsigned wid);
+  private:
+    std::list<unsigned> m_warps_in_ocs; 
+};
 class oldest_scheduler : public scheduler_unit {
  public:
   oldest_scheduler(shader_core_stats *stats, shader_core_ctx *shader,
@@ -577,7 +616,7 @@ class opndcoll_rfu_t {  // operand collector based register file unit
   typedef std::vector<unsigned int> uint_vector_t;
   void add_port(port_vector_t &input, port_vector_t &ouput,
                 uint_vector_t cu_sets);
-  virtual void init(unsigned num_banks, shader_core_ctx *shader);
+  virtual void init(unsigned num_banks, unsigned num_scheds, std::vector<scheduler_unit *> *schedulers, shader_core_ctx *shader);
 
   // modifiers
   virtual bool writeback(warp_inst_t &warp);
@@ -2150,6 +2189,7 @@ class shader_core_ctx : public core_t {
 
   void issue();
   friend class scheduler_unit;  // this is needed to use private issue warp.
+  friend class GTOCTOScheduler;
   friend class TwoLevelScheduler;
   friend class LooseRoundRobbinScheduler;
   virtual void issue_warp(register_set &warp, const warp_inst_t *pI,

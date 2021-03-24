@@ -28,10 +28,10 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include "shader.h"
-#include <iostream>
 #include <float.h>
 #include <limits.h>
 #include <string.h>
+#include <iostream>
 #include "../../libcuda/gpgpu_context.h"
 #include "../cuda-sim/cuda-sim.h"
 #include "../cuda-sim/ptx-stats.h"
@@ -167,18 +167,18 @@ void shader_core_ctx::create_schedulers() {
   // must currently occur after all inputs have been initialized.
   std::string sched_config = m_config->gpgpu_scheduler_string;
   const concrete_scheduler scheduler =
-      sched_config.find("lrr") != std::string::npos
-          ? CONCRETE_SCHEDULER_LRR
-          : sched_config.find("two_level_active") != std::string::npos
-                ? CONCRETE_SCHEDULER_TWO_LEVEL_ACTIVE
-                : sched_config.find("gto") != std::string::npos
-                      ? CONCRETE_SCHEDULER_GTO
-                      : sched_config.find("old") != std::string::npos
-                            ? CONCRETE_SCHEDULER_OLDEST_FIRST
-                            : sched_config.find("warp_limiting") !=
-                                      std::string::npos
-                                  ? CONCRETE_SCHEDULER_WARP_LIMITING
-                                  : NUM_CONCRETE_SCHEDULERS;
+      (sched_config.find("lrr") != std::string::npos) ? CONCRETE_SCHEDULER_LRR
+      : (sched_config.find("two_level_active") != std::string::npos)
+          ? CONCRETE_SCHEDULER_TWO_LEVEL_ACTIVE
+      : (sched_config.find("gto") != std::string::npos) ? CONCRETE_SCHEDULER_GTO
+      : (sched_config.find("old") != std::string::npos)
+          ? CONCRETE_SCHEDULER_OLDEST_FIRST
+      : (sched_config.find("warp_limiting") != std::string::npos)
+          ? CONCRETE_SCHEDULER_WARP_LIMITING
+      : (sched_config.find("rfcache_grtocto") != std::string::npos)
+          ? CONCRETE_SCHEDULER_GTOCTO
+          : NUM_CONCRETE_SCHEDULERS;
+
   assert(scheduler != NUM_CONCRETE_SCHEDULERS);
 
   for (unsigned i = 0; i < m_config->gpgpu_num_sched_per_core; i++) {
@@ -222,6 +222,14 @@ void shader_core_ctx::create_schedulers() {
             &m_pipeline_reg[ID_OC_SFU], &m_pipeline_reg[ID_OC_INT],
             &m_pipeline_reg[ID_OC_TENSOR_CORE], m_specilized_dispatch_reg,
             &m_pipeline_reg[ID_OC_MEM], i, m_config->gpgpu_scheduler_string));
+        break;
+      case CONCRETE_SCHEDULER_GTOCTO:
+        schedulers.push_back(new GTOCTOScheduler(
+            m_stats, this, m_scoreboard, m_simt_stack, &m_warp,
+            &m_pipeline_reg[ID_OC_SP], &m_pipeline_reg[ID_OC_DP],
+            &m_pipeline_reg[ID_OC_SFU], &m_pipeline_reg[ID_OC_INT],
+            &m_pipeline_reg[ID_OC_TENSOR_CORE], m_specilized_dispatch_reg,
+            &m_pipeline_reg[ID_OC_MEM], i));
         break;
       default:
         abort();
@@ -366,7 +374,9 @@ void shader_core_ctx::create_exec_pipeline() {
     }
   }
 
-  m_operand_collector.init(m_config->gpgpu_num_reg_banks, this);
+  m_operand_collector.init(m_config->gpgpu_num_reg_banks,
+                           m_config->gpgpu_num_sched_per_core, &schedulers,
+                           this);
 
   m_num_function_units =
       m_config->gpgpu_num_sp_units + m_config->gpgpu_num_dp_units +
@@ -435,7 +445,8 @@ void shader_core_ctx::create_exec_pipeline() {
   //   this->m_result_bus.push_back(new std::bitset<MAX_ALU_LATENCY>());
   // }
 
-  m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks, &m_operand_collector);
+  m_res_bus.init(num_result_bus, m_config->gpgpu_num_reg_banks,
+                 &m_operand_collector);
 }
 
 shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
@@ -448,7 +459,8 @@ shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
       m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core,
                  config->max_barriers_per_cta, config->warp_size),
       m_active_warps(0),
-      m_dynamic_warp_id(0), m_operand_collector(config, stats->m_rfcache_stats, this) {
+      m_dynamic_warp_id(0),
+      m_operand_collector(config, stats->m_rfcache_stats, this) {
   m_cluster = cluster;
   m_config = config;
   m_memory_config = mem_config;
@@ -582,7 +594,8 @@ float shader_core_ctx::get_current_occupancy(unsigned long long &active,
   }
 }
 
-void shader_core_stats::print(FILE *fout, unsigned long long gpu_tot_sim_cycle, unsigned long long gpu_sim_cycle) const {
+void shader_core_stats::print(FILE *fout, unsigned long long gpu_tot_sim_cycle,
+                              unsigned long long gpu_sim_cycle) const {
   unsigned long long thread_icount_uarch = 0;
   unsigned long long warp_icount_uarch = 0;
 
@@ -590,8 +603,9 @@ void shader_core_stats::print(FILE *fout, unsigned long long gpu_tot_sim_cycle, 
     thread_icount_uarch += m_num_sim_insn[i];
     warp_icount_uarch += m_num_sim_winsn[i];
   }
-  
-  auto tot_num_ocs = m_config->gpgpu_operand_collector_num_units_gen * m_config->num_shader();
+
+  auto tot_num_ocs =
+      m_config->gpgpu_operand_collector_num_units_gen * m_config->num_shader();
   m_rfcache_stats.print(gpu_tot_sim_cycle, gpu_sim_cycle, tot_num_ocs);
 
   fprintf(fout, "gpgpu_n_tot_thrd_icount = %lld\n", thread_icount_uarch);
@@ -1471,6 +1485,189 @@ void gto_scheduler::order_warps() {
                     scheduler_unit::sort_warps_by_oldest_dynamic_id);
 }
 
+void GTOCTOScheduler::order_warps() {
+  std::vector<shd_warp_t *> result;  // next priority list
+  auto temp = m_supervised_warps;    // used to keep sorted supervised list
+  auto last_issued_wid =
+      (*m_last_supervised_issued)->get_warp_id();  // wid of last issued
+  bool last_issued_is_in_ocs =
+      is_in_ocs(last_issued_wid);  // last issued is in ocs or not
+
+  if (last_issued_is_in_ocs) {
+    // gready if the last issued is in OCs
+    result.push_back(*m_last_supervised_issued);
+  }
+
+  std::sort(temp.begin(), temp.end(),
+            [this](shd_warp_t *lhs, shd_warp_t *rhs) -> bool {
+              return this->sort_warps(lhs, rhs);
+            });  // sort based on priority function sort_warps
+
+  for (std::vector<shd_warp_t *>::iterator iter = temp.begin();
+       iter != temp.end(); iter++) {
+    if (last_issued_is_in_ocs && (*iter)->get_warp_id() == last_issued_wid) {
+      continue;
+    }
+    result.push_back(*iter);
+  }
+
+  m_next_cycle_prioritized_warps = result;
+
+#ifdef D6BUG
+  dump();
+#endif
+}
+
+bool GTOCTOScheduler::is_in_ocs(unsigned wid) {
+  return std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(), wid) !=
+         m_warps_in_ocs.end();
+}
+
+bool GTOCTOScheduler::sort_warps(shd_warp_t *lhs, shd_warp_t *rhs) {
+  if (rhs && lhs) {
+    if (lhs->done_exit() || lhs->waiting()) {
+      return false;
+    } else if (rhs->done_exit() || rhs->waiting()) {
+      return true;
+    } else {
+      auto lhs_wid = lhs->get_warp_id();
+      auto lhs_dwid = lhs->get_dynamic_warp_id();
+      auto rhs_wid = rhs->get_warp_id();
+      auto rhs_dwid = rhs->get_dynamic_warp_id();
+
+      auto lhs_is_in_ocs = is_in_ocs(lhs_wid);
+      auto rhs_is_in_ocs = is_in_ocs(rhs_wid);
+
+      if (lhs_is_in_ocs && rhs_is_in_ocs) {
+        return lhs_dwid < rhs_dwid;
+      } else if (lhs_is_in_ocs && !rhs_is_in_ocs) {
+        return true;
+      } else if (!lhs_is_in_ocs && rhs_is_in_ocs) {
+        return false;
+      } else {
+        return lhs_dwid < rhs_dwid;
+      }
+    }
+  } else {
+    return lhs < rhs;
+  }
+}
+void GTOCTOScheduler::cycle() { scheduler_unit::cycle(); }
+
+void GTOCTOScheduler::allocate_oc(unsigned last_wid, unsigned new_wid) {
+  bool new_wid_not_present_in_list =
+      std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(), new_wid) ==
+      m_warps_in_ocs.end();  // new wid is not in the list
+  bool last_wid_present_in_supervised_warps =
+      std::find_if(m_supervised_warps.begin(), m_supervised_warps.end(),
+                   [last_wid](shd_warp_t *warp) -> bool {
+                     return last_wid == warp->get_warp_id();
+                   }) != m_supervised_warps.end();
+  bool new_wid_present_in_supervised_warps =
+      std::find_if(m_supervised_warps.begin(), m_supervised_warps.end(),
+                   [new_wid](shd_warp_t *warp) -> bool {
+                     return new_wid == warp->get_warp_id();
+                   }) != m_supervised_warps.end();
+  D6PRINTF(
+      "Scheduler" << get_schd_id() << ": Allocate wid <" << last_wid << ", "
+                  << new_wid << "> "
+                  << (last_wid_present_in_supervised_warps ? "LPS" : "LNPS")
+                  << " "
+                  << (new_wid_present_in_supervised_warps ? "NPS" : "NNPS")
+                  << " " << (new_wid_not_present_in_list ? "NNL" : "NPL"))
+  if (last_wid == -1) {                   // allocate the oc for the first time
+    assert(new_wid_not_present_in_list);  // allocated warp should not
+                                          // previously be in the list
+  } else {                                // oc preempted
+    if (last_wid_present_in_supervised_warps) {
+      // replaced warp is among supervised warps
+      auto replaced_warp =
+          std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(), last_wid);
+      assert(replaced_warp != m_warps_in_ocs.end());
+      m_warps_in_ocs.erase(replaced_warp);
+      if (last_wid == new_wid) {
+        new_wid_not_present_in_list = true;
+      }
+    }
+  }
+  if (new_wid_present_in_supervised_warps) {
+    // new warp is among supervised warps of this scheduler
+    if (new_wid_not_present_in_list)  // add to the list only if it is not
+                                      // already present in the list
+      m_warps_in_ocs.push_back(new_wid);
+  }
+}
+
+void GTOCTOScheduler::add_supervised_warp_id(int i) {
+  scheduler_unit::add_supervised_warp_id(i);
+  D6PRINTF(get_schd_id() << " Add warp " << i)
+}
+
+void GTOCTOScheduler::dump() {
+  D6PRINTF("Scheduler " << get_schd_id())
+  std::stringstream ss;
+  D6PRINTF("supervised warps")  // warps assigned to this scheduler
+  for (auto supervised_warp : m_supervised_warps) {
+    if ((supervised_warp) == NULL || supervised_warp->done_exit()) {
+      continue;
+    }
+    ss << "<" << supervised_warp->get_warp_id() << ", "
+       << supervised_warp->get_dynamic_warp_id() << "> ";
+  }
+  D6PRINTF(ss.str())
+  D6PRINTF("Last Issued")
+  D6PRINTF("<" << (*m_last_supervised_issued)->get_warp_id() << ", "
+               << (*m_last_supervised_issued)->get_dynamic_warp_id()
+               << "> ")  // last warp issued
+  D6PRINTF("Next Cycle Priority")
+
+  ss.str(std::string());  // recycle string stream
+
+  for (auto next_cycle_warp :
+       m_next_cycle_prioritized_warps) {  // priority list for next cycle
+    if (next_cycle_warp == NULL || next_cycle_warp->done_exit()) {
+      continue;
+    }
+
+    auto wid = next_cycle_warp->get_warp_id();           // warp_id
+    auto dwid = next_cycle_warp->get_dynamic_warp_id();  // dynamic warp id
+    auto waiting = warp(wid).waiting();                  // waiting for barrier
+    auto has_valid =
+        !warp(wid).ibuffer_empty() &&
+        warp(wid).ibuffer_next_valid();  // has valid inst in ibuffer
+
+    const warp_inst_t *pI =
+        warp(wid).ibuffer_next_inst();  // get next valid inst from ibuffer
+
+    bool has_control_hazard = false;
+    bool has_scoreboard_collision = false;
+
+    if (pI && has_valid) {
+      unsigned pc, rpc;
+      m_shader->get_pdom_stack_top_info(wid, pI, &pc, &rpc);
+      has_control_hazard = pI->pc != pc;
+      if (!has_control_hazard)
+        has_scoreboard_collision = m_scoreboard->checkCollision(wid, pI);
+    }
+
+    ss << "<" << wid << ", " << dwid << ", " << (waiting ? "W" : "NW") << " "
+       << (has_valid ? "V" : "NV") << " " << (has_control_hazard ? "CH" : "NCH")
+       << " " << (has_scoreboard_collision ? "SC" : "NSC") << "> ";
+  }
+  D6PRINTF(ss.str());
+
+  D6PRINTF("Warps in OCs")
+
+  ss.str(std::string());
+
+  assert(m_warps_in_ocs.size() <=
+         m_shader->m_config->gpgpu_operand_collector_num_units_gen);
+  for (auto warp : m_warps_in_ocs) {
+    ss << warp << " ";
+  }
+  D6PRINTF(ss.str());
+}
+
 void oldest_scheduler::order_warps() {
   order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
                     m_last_supervised_issued, m_supervised_warps.size(),
@@ -1683,8 +1880,7 @@ void shader_core_ctx::execute() {
     if (issue_inst.has_ready() && m_fu[n]->can_issue(**ready_reg)) {
       bool schedule_wb_now = !m_fu[n]->stallable();
       // int resbus = -1;
-      if (schedule_wb_now &&
-          (/*resbus = */m_res_bus.test(*ready_reg) != -1)) {
+      if (schedule_wb_now && (/*resbus = */ m_res_bus.test(*ready_reg) != -1)) {
         assert((*ready_reg)->latency < MAX_ALU_LATENCY);
         // m_result_bus[resbus]->set((*ready_reg)->latency);
         m_fu[n]->issue(issue_inst);
@@ -3093,8 +3289,7 @@ void ldst_unit::print(FILE *fout) const {
       m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
   fprintf(fout, "Pending register writes:\n");
   std::map<unsigned /*warp_id*/,
-           std::map<unsigned /*regnum*/, unsigned /*count*/> >::const_iterator
-      w;
+           std::map<unsigned /*regnum*/, unsigned /*count*/>>::const_iterator w;
   for (w = m_pending_writes.begin(); w != m_pending_writes.end(); w++) {
     unsigned warp_id = w->first;
     const std::map<unsigned /*regnum*/, unsigned /*count*/> &warp_info =
@@ -3370,7 +3565,10 @@ void shader_core_ctx::cycle() {
   writeback();
   execute();
   read_operands();
+
+  // for (unsigned i = 0; i < 4; i++) // increasing issue bandwidth
   issue();
+
   for (int i = 0; i < m_config->inst_fetch_throughput; ++i) {
     decode();
     fetch();
@@ -3865,7 +4063,9 @@ void opndcoll_rfu_t::add_port(port_vector_t &input, port_vector_t &output,
   m_in_ports.push_back(input_port_t(input, output, cu_sets));
 }
 
-void opndcoll_rfu_t::init(unsigned num_banks, shader_core_ctx *shader) {
+void opndcoll_rfu_t::init(unsigned num_banks, unsigned num_scheds,
+                          std::vector<scheduler_unit *> *schedulers,
+                          shader_core_ctx *shader) {
   m_shader = shader;
   m_arbiter = new arbiter_t();
 
@@ -3984,7 +4184,8 @@ void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
     if ((*inp.m_in[i]).has_ready()) {
       // find a free cu
       for (unsigned j = 0; j < inp.m_cu_sets.size(); j++) {
-        std::vector<std::shared_ptr<collector_unit_t>> &cu_set = m_cus[inp.m_cu_sets[j]];
+        std::vector<std::shared_ptr<collector_unit_t>> &cu_set =
+            m_cus[inp.m_cu_sets[j]];
         bool allocated = false;
         for (unsigned k = 0; k < cu_set.size(); k++) {
           if (cu_set[k]->is_free()) {
@@ -4069,7 +4270,7 @@ void opndcoll_rfu_t::collector_unit_t::init(unsigned n, unsigned num_banks,
                                             bool sub_core_model,
                                             unsigned banks_per_sched) {
   m_rfu = rfu;
-  //m_cuid = n;
+  // m_cuid = n;
   m_num_banks = num_banks;
   assert(m_warp == NULL);
   m_warp = new warp_inst_t(config);
@@ -4079,7 +4280,7 @@ void opndcoll_rfu_t::collector_unit_t::init(unsigned n, unsigned num_banks,
 }
 
 bool opndcoll_rfu_t::collector_unit_t::allocate(register_set *pipeline_reg_set,
-    
+
                                                 register_set *output_reg_set) {
   assert(m_free);
   assert(m_not_ready.none());
