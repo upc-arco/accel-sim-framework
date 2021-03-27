@@ -10,7 +10,7 @@ RFWithCache::RFWithCache(const shader_core_config *config,
       m_oc_allocator(config->gpgpu_operand_collector_num_units_gen,
                      config->max_warps_per_shader),
       m_rfcache_stats(rfcache_stats),
-      m_shdr(shader) {}
+      m_shdr(shader), m_schedulers(nullptr) {}
 
 RFWithCache::modified_collector_unit_t::modified_collector_unit_t(
     std::size_t sz, unsigned sid, unsigned num_oc_per_core, unsigned oc_id,
@@ -61,8 +61,11 @@ void RFWithCache::OCAllocator::add_oc(
   assert(!has_replacement);
 }
 
-void RFWithCache::init(unsigned num_banks, shader_core_ctx *shader) {
+void RFWithCache::init(unsigned num_banks, unsigned num_scheds, std::vector<scheduler_unit *> *schedulers, shader_core_ctx *shader) {
   m_shader = shader;
+  m_n_schedulers = num_scheds; // number of schedulers
+  m_schedulers = schedulers; // pointer to all schedulers
+  assert(m_schedulers && m_n_schedulers > 0);
   m_arbiter = new modified_arbiter_t();
   m_arbiter->init(m_cu.size(), num_banks);
   // for( unsigned n=0; n<m_num_ports;n++ )
@@ -89,6 +92,13 @@ void RFWithCache::init(unsigned num_banks, shader_core_ctx *shader) {
   m_initialized = true;
 }
 
+void RFWithCache::signal_schedulers(unsigned last_wid, unsigned new_wid) {
+  for (unsigned i = 0; i < m_n_schedulers; i++) {
+    auto scheduler = static_cast<GTOCTOScheduler *>((*m_schedulers)[i]);
+    scheduler->allocate_oc(last_wid, new_wid);
+  }
+}
+
 void RFWithCache::allocate_cu(unsigned port_num) {
   input_port_t &inp = m_in_ports[port_num];
   for (unsigned i = 0; i < inp.m_in.size(); i++) {
@@ -98,7 +108,10 @@ void RFWithCache::allocate_cu(unsigned port_num) {
       warp_inst_t inst = **pipeline_reg;
       auto allocated = m_oc_allocator.allocate(inst);
       if (allocated.first) {
+        auto last_wid = allocated.second.get_warp_id(); // previous wid in the oc
         allocated.second.allocate(inp.m_in[i], inp.m_out[i]);
+        auto new_wid = allocated.second.get_warp_id(); // new wid in the cache
+        signal_schedulers(last_wid, new_wid);
         m_arbiter->add_read_requests(&allocated.second);
       } else {
         DDDPRINTF("OCAllocator stalled")

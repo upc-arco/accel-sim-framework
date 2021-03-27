@@ -1,6 +1,18 @@
 #pragma once
 #include <iostream>
 
+#ifdef D7BUG
+#define D7PRINTF(x) std::cout << "RFScheduler: " << x << std::endl;
+#else
+#define D7PRINTF(x) 
+#endif
+
+#ifdef D6BUG
+#define D6PRINTF(x) std::cout << "RFScheduler: " << x << std::endl;
+#else
+#define D6PRINTF(x) 
+#endif
+
 #ifdef DDDDBUG
 #define DDDDPRINTF(x) std::cout << "RFCacheStats: " << x << std::endl;
 #else
