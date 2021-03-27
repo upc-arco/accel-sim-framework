@@ -573,8 +573,10 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
   void delete_from_priority_list(unsigned wid) {
     for (auto iter = m_next_cycle_prioritized_warps.begin();
          iter != m_next_cycle_prioritized_warps.end(); iter++) {
-      if ((*iter)->get_warp_id() == wid)
+      if ((*iter)->get_warp_id() == wid) {
         m_next_cycle_prioritized_warps.erase(iter);
+        break;
+      }
     }
   }
   void order_func();
