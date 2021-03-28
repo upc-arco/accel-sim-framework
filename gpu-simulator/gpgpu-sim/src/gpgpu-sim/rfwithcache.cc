@@ -10,7 +10,8 @@ RFWithCache::RFWithCache(const shader_core_config *config,
       m_oc_allocator(config->gpgpu_operand_collector_num_units_gen,
                      config->max_warps_per_shader),
       m_rfcache_stats(rfcache_stats),
-      m_shdr(shader), m_schedulers(nullptr) {}
+      m_shdr(shader),
+      m_schedulers(nullptr) {}
 
 RFWithCache::modified_collector_unit_t::modified_collector_unit_t(
     std::size_t sz, unsigned sid, unsigned num_oc_per_core, unsigned oc_id,
@@ -61,10 +62,12 @@ void RFWithCache::OCAllocator::add_oc(
   assert(!has_replacement);
 }
 
-void RFWithCache::init(unsigned num_banks, unsigned num_scheds, std::vector<scheduler_unit *> *schedulers, shader_core_ctx *shader) {
+void RFWithCache::init(unsigned num_banks, unsigned num_scheds,
+                       std::vector<scheduler_unit *> *schedulers,
+                       shader_core_ctx *shader) {
   m_shader = shader;
-  m_n_schedulers = num_scheds; // number of schedulers
-  m_schedulers = schedulers; // pointer to all schedulers
+  m_n_schedulers = num_scheds;  // number of schedulers
+  m_schedulers = schedulers;    // pointer to all schedulers
   assert(m_schedulers && m_n_schedulers > 0);
   m_arbiter = new modified_arbiter_t();
   m_arbiter->init(m_cu.size(), num_banks);
@@ -101,29 +104,124 @@ void RFWithCache::signal_schedulers(unsigned last_wid, unsigned new_wid) {
 
 void RFWithCache::allocate_cu(unsigned port_num) {
   input_port_t &inp = m_in_ports[port_num];
-  for (unsigned i = 0; i < inp.m_in.size(); i++) {
-    if ((*inp.m_in[i]).has_ready()) {
-      DDPRINTF("OCAllocator Allocate New OC")
-      warp_inst_t **pipeline_reg = inp.m_in[i]->get_ready();
-      warp_inst_t inst = **pipeline_reg;
-      auto allocated = m_oc_allocator.allocate(inst);
-      if (allocated.first) {
-        auto last_wid = allocated.second.get_warp_id(); // previous wid in the oc
-        allocated.second.allocate(inp.m_in[i], inp.m_out[i]);
-        auto new_wid = allocated.second.get_warp_id(); // new wid in the cache
-        signal_schedulers(last_wid, new_wid);
-        m_arbiter->add_read_requests(&allocated.second);
-      } else {
-        DDDPRINTF("OCAllocator stalled")
-      }
-      break;  // can only service a single input, if it failed it will fail for
-              // others.
+  sort_next_input_port(
+      port_num,
+      inp);  // first we should sort inst in the input port
+             // to priritize warps that are currently in the ocs
+             // for (auto iter = m_prioritized_input_port.begin(); iter !=
+  if (m_prioritized_input_port.size() > 0) {
+    DDPRINTF("OCAllocator Allocate New OC")
+#ifdef D8BUG
+    dump_in_latch(port_num);
+#endif
+    auto next_ready_inst_outp =
+        m_prioritized_input_port.front();  // the first priority in the list
+    m_prioritized_input_port
+        .pop_front();  // if one ready failed don't consider it again
+
+    // warp_inst_t **pipeline_reg = inp.m_in[i]->get_ready();
+    warp_inst_t **next_ready_inst =
+        next_ready_inst_outp.first;  //**pipeline_reg;
+    register_set *next_outp =
+        next_ready_inst_outp.second;  // output port for next ready instruction
+    assert(next_ready_inst && !(*next_ready_inst)->empty());
+    auto allocated = m_oc_allocator.allocate(**next_ready_inst);
+    if (allocated.first) {
+      auto last_wid = allocated.second.get_warp_id();  // previous wid in the oc
+      allocated.second.allocate(next_ready_inst, next_outp);
+      auto new_wid = allocated.second.get_warp_id();  // new wid in the cache
+      signal_schedulers(last_wid, new_wid);
+      m_arbiter->add_read_requests(&allocated.second);
+    } else {
+      DDDPRINTF("OCAllocator stalled")  // can only service one input
     }
+  }
+}
+
+void RFWithCache::sort_next_input_port(unsigned port_num,
+                                       const input_port_t &inp) {
+  std::list<std::pair<warp_inst_t **, register_set *>>
+      temp;             // temp list of ready insts in the input latches 
+                        // and target out ports
+  if (port_num == 0) {  // only do sorting for port 0, other ports are replicas
+    auto warps_in_ocs = m_oc_allocator.get_warps_in_ocs();
+    unsigned reg_set_num = 0;
+    for (auto in_reg_set : inp.m_in) {
+      auto out_reg_set = inp.m_out[reg_set_num];
+      while(warp_inst_t **next_ready_inst = in_reg_set->get_next_ready()) {
+        auto ready_outp = std::make_pair(next_ready_inst, out_reg_set);
+        temp.push_back(ready_outp);
+      }
+      assert(in_reg_set->traversed_all_regs());
+      reg_set_num++;
+    }
+    // temp has list of ready insts
+    // now we should sort them
+    temp.sort([this, warps_in_ocs](
+                  const std::pair<warp_inst_t **, register_set *> &lhs,
+                  const std::pair<warp_inst_t **, register_set *> &rhs) -> bool {
+      return this->priority_func(**lhs.first, **rhs.first, warps_in_ocs);
+    });
+    m_prioritized_input_port =
+        temp;  // set the next priritized list of ready insts and output ports
+  }
+}
+
+bool RFWithCache::priority_func(
+    const warp_inst_t &lhs,
+    const warp_inst_t &rhs,
+    std::list<unsigned> warps_in_ocs) const {
+  assert(!lhs.empty() && !rhs.empty());
+
+  auto lhs_wid = lhs.warp_id();
+  auto lhs_dwid = lhs.dynamic_warp_id();
+  auto rhs_wid = rhs.warp_id();
+  auto rhs_dwid = rhs.dynamic_warp_id();
+  auto lhs_is_in_oc = std::find(warps_in_ocs.begin(), warps_in_ocs.end(),
+                                lhs_wid) != warps_in_ocs.end();
+  auto rhs_is_in_oc = std::find(warps_in_ocs.begin(), warps_in_ocs.end(),
+                                rhs_wid) != warps_in_ocs.end();
+
+  if (lhs_is_in_oc && rhs_is_in_oc) {
+    return lhs_dwid < rhs_dwid;
+  } else if (!lhs_is_in_oc && rhs_is_in_oc) {
+    return false;
+  } else if (lhs_is_in_oc && !rhs_is_in_oc) {
+    return true;
+  } else {
+    // both are not in ocs
+    return lhs_dwid < rhs_dwid;
+  }
+}
+
+void RFWithCache::dump_in_latch(unsigned port_num) const {
+  D8PRINTF("prioritized input latch")
+  std::stringstream ss;
+  auto warps_in_ocs = m_oc_allocator.get_warps_in_ocs();
+  if (port_num == 0 && !warps_in_ocs.empty()) {
+    ss << "warps in ocs: ";
+    for (auto warp : warps_in_ocs) {
+      ss << warp << " ";
+    }
+    D8PRINTF(ss.str());
+    ss.str("");
+  }
+  if (m_prioritized_input_port.size() > 0) {
+    ss << "list: ";
+    for (auto in_latch_inst : m_prioritized_input_port) {
+      auto &inst = **in_latch_inst.first;
+      auto wid = inst.warp_id();
+      auto dwid = inst.dynamic_warp_id();
+      assert(!inst.empty());
+      ss << "<" << wid << ", " << dwid <<  ", " << inst.pc << "> ";
+    }
+    D8PRINTF(ss.str())
   }
 }
 
 std::pair<bool, RFWithCache::modified_collector_unit_t &>
 RFWithCache::OCAllocator::allocate(const warp_inst_t &inst) {
+  assert(!inst.empty());
   if (m_n_available == 0) {
     return std::pair<bool, modified_collector_unit_t &>{
         false, m_info_table.begin()->second.m_oc};
@@ -222,23 +320,24 @@ RFWithCache::modified_collector_unit_t::RFCache::RFCache(
 }
 
 bool RFWithCache::modified_collector_unit_t::allocate(
-    register_set *pipeline_reg_set, register_set *output_reg_set) {
+    warp_inst_t **inst_in_inp_reg, register_set *output_reg_set) {
   DDDPRINTF("New OC Allocation")
-  warp_inst_t **pipeline_reg = pipeline_reg_set->get_ready();
-  assert((pipeline_reg) && !((*pipeline_reg)->empty()));
-  warp_inst_t &inst = **pipeline_reg;
-  auto srcs = get_src_ops(inst);  // extract all source ops
+  // warp_inst_t **pipeline_reg = pipeline_reg_set->get_ready();
+  assert(inst_in_inp_reg && !(*inst_in_inp_reg)->empty());
+  // warp_inst_t &inst = **pipeline_reg;
+  auto srcs = get_src_ops(**inst_in_inp_reg);  // extract all source ops
 
   assert(m_rfcache.can_allocate(
-      srcs, inst.warp_id()));  // it should be accepted by cache
+      srcs, (*inst_in_inp_reg)->warp_id()));  // it should be accepted by cache
   auto last_warp_id = m_warp_id;
-  m_warp_id = inst.warp_id();
+  m_warp_id = (*inst_in_inp_reg)->warp_id();
   if (m_warp_id != last_warp_id) {  // new warp allocated to this oc
     DDDPRINTF("OC " << get_id() << " Preempted lwid: " << last_warp_id
                     << " nwid: " << m_warp_id)
     // flush everyting
     m_rfcache.flush();
   }
+  assert(m_free);
   m_free = false;
   m_output_register = output_reg_set;
   unsigned op = 0;
@@ -249,7 +348,7 @@ bool RFWithCache::modified_collector_unit_t::allocate(
       // only for missed values we need to wait
       m_src_op[op] =
           op_t(this, op, src, m_num_banks, m_bank_warp_shift, m_sub_core_model,
-               m_num_banks_per_sched, inst.get_schd_id());
+               m_num_banks_per_sched, (*inst_in_inp_reg)->get_schd_id());
       m_not_ready.set(op);
     } else {
       m_src_op[op] = op_t();
@@ -257,7 +356,11 @@ bool RFWithCache::modified_collector_unit_t::allocate(
     op++;
   }
 
-  pipeline_reg_set->move_out_to(m_warp);
+  assert(m_warp->empty());
+  move_warp(m_warp /*dst*/,
+            *inst_in_inp_reg /*src*/);  // transfer inst from input reg to oc
+  assert(!m_warp->empty());
+  assert((*inst_in_inp_reg)->empty());
   m_warp->set_dst_oc_id(get_id());
 
   return true;
@@ -459,6 +562,7 @@ void RFWithCache::step() {
   dispatch_ready_cu();
   allocate_reads();
   for (unsigned p = 0; p < m_in_ports.size(); p++) allocate_cu(p);
+  m_prioritized_input_port.clear();
   cache_cycle();
   process_banks();
 }
@@ -507,8 +611,8 @@ void RFWithCache::process_writes() {
         oc_id;
     auto curr_wid = oc->get_warp_id();
     size_t oc_wreqs = 0;
-    bool wreq_to_preempted_oc = false;
     while (m_write_reqs.has_req(oc_id)) {
+    bool wreq_to_preempted_oc = false;
       oc_wreqs++;
       m_rfcache_stats.inc_writes(m_shdr->get_sid());
       auto req = m_write_reqs.pop(oc_id);
@@ -685,7 +789,6 @@ void RFWithCache::process_fill_buffer() {
 void RFWithCache::modified_collector_unit_t::process_fill_buffer() {
   DDDPRINTF("Process Fill Buffer in OC<" << get_id() << ">")
   m_rfcache.process_fill_buffer();
-  
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {

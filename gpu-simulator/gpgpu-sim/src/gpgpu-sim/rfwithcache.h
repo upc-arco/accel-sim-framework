@@ -24,6 +24,15 @@ class RFWithCache : public opndcoll_rfu_t {
 
  private:
   void signal_schedulers(unsigned last_wid, unsigned new_wid);
+  void sort_next_input_port(unsigned port_num, const input_port_t &inp);
+  bool priority_func(const warp_inst_t &lhs,
+                     const warp_inst_t &rhs,
+                     std::list<unsigned> warps_in_ocs) const;
+  std::list<std::pair<warp_inst_t **, register_set *>>
+      m_prioritized_input_port;  // keep next cycle prioritized list of
+                                 // instructions in the input port and the
+                                 // target output port
+  void dump_in_latch(unsigned port_num) const;
   std::vector<scheduler_unit *> *m_schedulers;
   unsigned m_n_schedulers;
   const shader_core_ctx *m_shdr;
@@ -58,7 +67,7 @@ class RFWithCache : public opndcoll_rfu_t {
       return get_id() == r.get_id();
     }
     bool can_be_allocated(const warp_inst_t &inst) const;
-    bool allocate(register_set *, register_set *) override;
+    bool allocate(warp_inst_t **, register_set *);
     bool is_not_ready(unsigned op_id) { return m_not_ready.test(op_id); }
     enum access_t {
       Hit,
@@ -149,6 +158,14 @@ class RFWithCache : public opndcoll_rfu_t {
         const warp_inst_t &inst);
     void dispatch(unsigned);
     void dump();
+    std::list<unsigned> get_warps_in_ocs() const {
+      std::list<unsigned> result;
+      for (auto iter = m_info_table.begin(); iter != m_info_table.end();
+           iter++) {
+        result.push_back(iter->first);
+      }
+      return result;
+    }
 
    private:
     size_t m_n_available;

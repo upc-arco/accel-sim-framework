@@ -1,6 +1,12 @@
 #pragma once
 #include <iostream>
 
+#ifdef D8BUG
+#define D8PRINTF(x) std::cout << "RFCache INP: " << x << std::endl;
+#else
+#define D8PRINTF(x) 
+#endif
+
 #ifdef D7BUG
 #define D7PRINTF(x) std::cout << "RFScheduler: " << x << std::endl;
 #else

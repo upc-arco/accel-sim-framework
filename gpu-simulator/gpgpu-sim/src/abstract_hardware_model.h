@@ -69,6 +69,7 @@ enum AdaptiveCache { FIXED = 0, ADAPTIVE_VOLTA = 1 };
 
 #ifdef __cplusplus
 
+#include <iostream>
 #include <stdio.h>
 #include <string.h>
 #include <set>
@@ -1015,14 +1016,19 @@ class warp_inst_t : public inst_t {
   }
   virtual ~warp_inst_t() {}
 
-  void set_dst_oc_id(unsigned id) { assert(m_dst_oc_id == -1); m_dst_oc_id = id; }
+  void set_dst_oc_id(unsigned id) { 
+    assert(m_dst_oc_id == -1); m_dst_oc_id = id; 
+  }
   unsigned get_dst_oc_id() const { return m_dst_oc_id; }
   
   // modifiers
   void broadcast_barrier_reduction(const active_mask_t &access_mask);
   void do_atomic(bool forceDo = false);
   void do_atomic(const active_mask_t &access_mask, bool forceDo = false);
-  void clear() { m_empty = true; }
+  void clear() { 
+    m_empty = true; 
+    m_dst_oc_id = -1;
+  }
 
   void issue(const active_mask_t &mask, unsigned warp_id,
              unsigned long long cycle, int dynamic_warp_id, int sch_id);
@@ -1297,6 +1303,7 @@ class register_set {
       regs.push_back(new warp_inst_t());
     }
     m_name = name;
+    m_last_iter = regs.begin();
   }
   bool has_free() {
     for (unsigned i = 0; i < regs.size(); i++) {
@@ -1335,6 +1342,10 @@ class register_set {
     move_warp(dest, *ready);
   }
 
+  void move_out_to_by_src_pointer(warp_inst_t *src_pointer, warp_inst_t *&dest) {
+    move_warp(dest, src_pointer);
+  }
+
   warp_inst_t **get_ready() {
     warp_inst_t **ready;
     ready = NULL;
@@ -1349,7 +1360,21 @@ class register_set {
     }
     return ready;
   }
-
+  
+  warp_inst_t ** get_next_ready() {
+    while(m_last_iter != regs.end()) {
+      if((*m_last_iter)->empty()) {
+        m_last_iter++;
+        continue;
+      } 
+      return &(*m_last_iter++);
+    }
+    m_last_iter = regs.begin();
+    return nullptr;
+  }
+  bool traversed_all_regs() {
+    return m_last_iter == regs.begin();
+  }
   void print(FILE *fp) const {
     fprintf(fp, "%s : @%p\n", m_name, this);
     for (unsigned i = 0; i < regs.size(); i++) {
@@ -1387,6 +1412,7 @@ class register_set {
  private:
   std::vector<warp_inst_t *> regs;
   const char *m_name;
+  std::vector<warp_inst_t *>::iterator m_last_iter;
 };
 
 #endif  // #ifdef __cplusplus
