@@ -342,7 +342,7 @@ bool RFWithCache::modified_collector_unit_t::allocate(
   m_output_register = output_reg_set;
   unsigned op = 0;
   for (auto src : srcs) {
-    //auto pending_reuses = (*inst_in_inp_reg)->arch_reg_pending_reuses.src[op]; // get the pending reuses to this source operand
+    auto pending_reuses = (*inst_in_inp_reg)->arch_reg_pending_reuses.src[op]; // get the pending reuses to this source operand
     auto access_status = m_rfcache.read_access(src, m_warp_id);
     if (access_status ==
         RFWithCache::modified_collector_unit_t::access_t::Miss) {
