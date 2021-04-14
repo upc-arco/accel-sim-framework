@@ -915,6 +915,8 @@ class inst_t {
     for (unsigned i = 0; i < MAX_REG_OPERANDS; i++) {
       arch_reg.src[i] = -1;
       arch_reg.dst[i] = -1;
+      arch_reg_pending_reuses.dst[i] = -1;
+      arch_reg_pending_reuses.src[i] = -1;
     }
     isize = 0;
   }
@@ -973,6 +975,10 @@ class inst_t {
     int dst[MAX_REG_OPERANDS];
     int src[MAX_REG_OPERANDS];
   } arch_reg;
+  struct {
+    int dst[MAX_REG_OPERANDS];
+    int src[MAX_REG_OPERANDS];
+  } arch_reg_pending_reuses;
   // int arch_reg[MAX_REG_OPERANDS]; // register number for bank conflict
   // evaluation
   unsigned latency;  // operation latency

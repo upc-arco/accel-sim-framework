@@ -4348,6 +4348,7 @@ bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
         inst.arch_reg.dst[op] = -1;
+        inst.arch_reg_pending_reuses.dst[op] = -1;
       } else {
         return false;
       }

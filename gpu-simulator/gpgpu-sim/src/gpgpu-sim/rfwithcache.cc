@@ -342,6 +342,7 @@ bool RFWithCache::modified_collector_unit_t::allocate(
   m_output_register = output_reg_set;
   unsigned op = 0;
   for (auto src : srcs) {
+    //auto pending_reuses = (*inst_in_inp_reg)->arch_reg_pending_reuses.src[op]; // get the pending reuses to this source operand
     auto access_status = m_rfcache.read_access(src, m_warp_id);
     if (access_status ==
         RFWithCache::modified_collector_unit_t::access_t::Miss) {
@@ -449,11 +450,21 @@ std::vector<unsigned> RFWithCache::modified_collector_unit_t::get_src_ops(
   for (unsigned op = 0; op < MAX_REG_OPERANDS; op++) {
     int reg_num = inst.arch_reg.src[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
+    
     if (reg_num < 0) {                    // valid register
       m_src_op[op] = op_t();
+      assert(inst.arch_reg_pending_reuses.src[op] == -1); // sanity check for pending reuse traces
     } else {
       srcs.push_back(reg_num);
+      assert(inst.arch_reg_pending_reuses.src[op] >= 0); // sanity check for pending reuse traces
     }
+    // ------ sanity check for consistent pending reuse traces
+    if(inst.arch_reg.dst[op] <0){
+      assert(inst.arch_reg_pending_reuses.dst[op] == -1);
+    } else {
+      assert(inst.arch_reg_pending_reuses.dst[op] >=0);
+    }
+    // -----------
   }
 
   return srcs;
@@ -585,6 +596,7 @@ bool RFWithCache::writeback(warp_inst_t &inst) {
                  m_num_banks_per_sched, inst.get_schd_id()));
         m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num);
         inst.arch_reg.dst[op] = -1;
+        inst.arch_reg_pending_reuses.dst[op] = -1;
       } else {
         return false;
       }

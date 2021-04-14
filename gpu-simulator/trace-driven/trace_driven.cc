@@ -156,6 +156,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
       out[m] = m % 2 ? trace.reg_dest[m / 2] + 1: trace.reg_dest[m / 2]; // Increment by one because GPGPU-sim starts
                                   // from R1, while SASS starts from R0
       arch_reg.dst[m] = out[m];
+      arch_reg_pending_reuses.dst[m] = trace.reg_dest_pending_reuse[m / 2]; 
     }
     incount = trace.reg_srcs_num * 2;
     for (unsigned m = 0; m < trace.reg_srcs_num * 2; ++m) {
@@ -163,6 +164,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
       in[m] = m % 2 ? trace.reg_src[m / 2] + 1 : trace.reg_src[m / 2]; // Increment by one because GPGPU-sim starts
                                 // from R1, while SASS starts from R0
       arch_reg.src[m] = in[m];
+      arch_reg_pending_reuses.src[m] = trace.reg_src_pending_reuse[m / 2];
     }
   } else {
     // fill regs information
@@ -173,6 +175,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
       out[m] = trace.reg_dest[m] + 1; // Increment by one because GPGPU-sim starts
                                       // from R1, while SASS starts from R0
       arch_reg.dst[m] = trace.reg_dest[m] + 1;
+      arch_reg_pending_reuses.dst[m] = trace.reg_dest_pending_reuse[m];
     }
 
     incount = trace.reg_srcs_num;
@@ -180,6 +183,7 @@ bool trace_warp_inst_t::parse_from_trace_struct(
       in[m] = trace.reg_src[m] + 1; // Increment by one because GPGPU-sim starts
                                     // from R1, while SASS starts from R0
       arch_reg.src[m] = trace.reg_src[m] + 1;
+      arch_reg_pending_reuses.src[m] = trace.reg_src_pending_reuse[m];
     }
   }
 

@@ -129,7 +129,21 @@ void inst_memadd_info_t::base_delta_decompress(
 }
 
 bool inst_trace_t::parse_from_string(std::string trace,
+                                     std::string pending_reuse_trace,
                                      unsigned trace_version) {
+
+
+  std::stringstream pending_reuse_str(pending_reuse_trace);
+  std::string pr_token;
+  std::vector<unsigned> pending_reuses;
+  while(getline(pending_reuse_str, pr_token, ',')) {
+    const std::string& chars = "\t\n\v\f\r ";
+    pr_token.erase(0, pr_token.find_first_not_of(chars));
+    pr_token.erase(pr_token.find_last_not_of(chars) + 1);
+    if(pr_token.length() == 0) continue; 
+    pending_reuses.push_back(stoi(pr_token));
+  }
+
   std::stringstream ss;
   ss.str(trace);
 
@@ -153,9 +167,11 @@ bool inst_trace_t::parse_from_string(std::string trace,
 
   ss >> std::dec >> reg_dsts_num;
   assert(reg_dsts_num <= MAX_DST);
+  unsigned dst_src_offset = 0;
   for (unsigned i = 0; i < reg_dsts_num; ++i) {
     ss >> temp;
     sscanf(temp.c_str(), "R%d", &reg_dest[i]);
+    reg_dest_pending_reuse.push_back(pending_reuses.at(dst_src_offset++));
   }
 
   ss >> opcode;
@@ -165,8 +181,10 @@ bool inst_trace_t::parse_from_string(std::string trace,
   for (unsigned i = 0; i < reg_srcs_num; ++i) {
     ss >> temp;
     sscanf(temp.c_str(), "R%d", &reg_src[i]);
+    reg_src_pending_reuse.push_back(pending_reuses.at(dst_src_offset++));
   }
-
+  assert(dst_src_offset == pending_reuses.size());
+  
   // parse mem info
   unsigned address_mode = 0;
   unsigned mem_width = 0;
@@ -281,8 +299,18 @@ trace_parser::parse_kernel_info(const std::string &kerneltraces_filepath) {
     std::cout << "Unable to open file: " << kerneltraces_filepath << std::endl;
     exit(1);
   }
-
   std::cout << "Processing kernel " << kerneltraces_filepath << std::endl;
+
+  auto pending_reuse_trace_path = kerneltraces_filepath;
+  auto dot_pos = pending_reuse_trace_path.find_last_of('.');
+  assert(dot_pos != std::string::npos);
+  pending_reuse_trace_path.replace(dot_pos + 1, std::string::npos, "rtrace");
+  m_pending_reuse_trace.open(pending_reuse_trace_path.c_str());
+  if (!m_pending_reuse_trace.is_open()) {
+    std::cout << "Unable to open file: " << pending_reuse_trace_path << std::endl;
+    exit(1);
+  }
+  std::cout << "Pending reuse trace " << pending_reuse_trace_path << " loaded" << std::endl;
 
   kernel_trace_t kernel_info;
 
@@ -353,8 +381,11 @@ trace_parser::parse_kernel_info(const std::string &kerneltraces_filepath) {
 }
 
 void trace_parser::kernel_finalizer() {
-  if (ifs.is_open())
+  if (ifs.is_open()) {
     ifs.close();
+    assert(m_pending_reuse_trace.is_open());
+    m_pending_reuse_trace.close();
+  }
 }
 
 bool trace_parser::get_next_threadblock_traces(
@@ -402,6 +433,12 @@ bool trace_parser::get_next_threadblock_traces(
         // the start of new warp stream
         assert(start_of_tb_stream_found);
         sscanf(line.c_str(), "warp = %d", &warp_id);
+        
+        assert(m_pending_reuse_trace.is_open());
+        std::string pending_reuse_trace_line;
+        getline(m_pending_reuse_trace, pending_reuse_trace_line);
+        assert(pending_reuse_trace_line.find("DWID") != std::string::npos);
+
       } else if (string1 == "insts") {
         assert(start_of_tb_stream_found);
         sscanf(line.c_str(), "insts = %d", &insts_num);
@@ -410,9 +447,14 @@ bool trace_parser::get_next_threadblock_traces(
         inst_count = 0;
       } else {
         assert(start_of_tb_stream_found);
+        
+        assert(m_pending_reuse_trace.is_open());
+        std::string pending_reuse_trace_line;
+        getline(m_pending_reuse_trace, pending_reuse_trace_line);
+
         threadblock_traces[warp_id]
             ->at(inst_count)
-            .parse_from_string(line, trace_version);
+            .parse_from_string(line, pending_reuse_trace_line, trace_version);
         inst_count++;
       }
     }

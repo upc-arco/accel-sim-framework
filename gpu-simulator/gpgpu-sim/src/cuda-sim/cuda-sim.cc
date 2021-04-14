@@ -1012,6 +1012,8 @@ void ptx_instruction::pre_decode() {
   is_vectorout = 0;
   std::fill_n(arch_reg.src, MAX_REG_OPERANDS, -1);
   std::fill_n(arch_reg.dst, MAX_REG_OPERANDS, -1);
+  std::fill_n(arch_reg_pending_reuses.src, MAX_REG_OPERANDS, -1);
+  std::fill_n(arch_reg_pending_reuses.dst, MAX_REG_OPERANDS, -1);
   pred = 0;
   ar1 = 0;
   ar2 = 0;
