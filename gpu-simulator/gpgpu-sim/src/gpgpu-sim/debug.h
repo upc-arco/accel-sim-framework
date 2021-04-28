@@ -1,6 +1,8 @@
 #pragma once
 #include <iostream>
 
+#define DDDEBUG
+//#define D8BUG
 #ifdef D8BUG
 #define D8PRINTF(x) std::cout << "RFCache INP: " << x << std::endl;
 #else

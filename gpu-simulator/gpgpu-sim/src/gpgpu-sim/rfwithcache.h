@@ -39,17 +39,32 @@ class RFWithCache : public opndcoll_rfu_t {
   RFCacheStats &m_rfcache_stats;
   const RFCacheConfig &m_rfcache_config;
 
+  
   class WriteReqs {
-   public:
-    void push(unsigned oc_id, unsigned wid, unsigned regid);
+    public:
+    class WriteReq {
+      public:
+        WriteReq(unsigned wid, unsigned regid, int pending_reuse) : m_wid{wid}, m_regid{regid}, m_pending_reuse{pending_reuse} {
+          assert(pending_reuse >= 0);
+        }
+        unsigned wid() const { return m_wid; }
+        unsigned regid() const { return m_regid; }
+        int pending_reuses() const { return m_pending_reuse; }
+      private:
+        unsigned m_wid;
+        unsigned m_regid;
+        int m_pending_reuse;
+    };
+
+    void push(unsigned oc_id, unsigned wid, unsigned regid, int pending_reuse);
     bool has_req(unsigned oc_id) const;
     void flush(unsigned oc_id);
-    std::pair<unsigned, unsigned> pop(unsigned oc_id);
+    WriteReq pop(unsigned oc_id);
     size_t size() const { return m_size; }
 
    private:
     size_t m_size;
-    std::unordered_map<unsigned, std::list<std::pair<unsigned, unsigned>>>
+    std::unordered_map<unsigned, std::list<WriteReq>>
         m_write_reqs;  // <ocid, list<wid, reg_id> last cycle write reqs
   };
   WriteReqs m_write_reqs;
@@ -74,7 +89,7 @@ class RFWithCache : public opndcoll_rfu_t {
       Miss,
     };
     void collect_operand(unsigned op) override;
-    void process_write(unsigned regid);
+    void process_write(unsigned regid, int pending_reuse);
     void process_fill_buffer();
 
    private:
@@ -84,12 +99,47 @@ class RFWithCache : public opndcoll_rfu_t {
      public:
       RFCache(std::size_t sz, RFCacheStats &rfcache_stats,
               unsigned global_oc_id);
-      access_t read_access(unsigned regid, unsigned wid);
+      access_t read_access(unsigned regid, int pending_reuses, unsigned wid);
       void flush();
-      void write_access(unsigned wid, unsigned regid);
+      void write_access(unsigned wid, unsigned regid, int pending_reuse);
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
       void lock(const tag_t &tag);
       void unlock(const tag_t &tag);
+      void replace(const tag_t &tag) {
+        assert(m_cache_table.find(tag) != m_cache_table.end());
+        if(m_cache_table[tag].m_pending_reuses > 0) {
+          assert(m_n_lives > 0);
+          m_n_lives--;
+        } else if (m_cache_table[tag].m_pending_reuses == 0) {
+          assert(m_n_deads > 0);
+          m_n_deads--;
+        }
+        m_cache_table[tag].m_pending_reuses = -1; // when we use replacement to multiple writes to the same reg pending reuse will be owerwritten by allocate 
+      }
+      void allocate(const tag_t &tag, int pending_reuses) { 
+        assert(pending_reuses >= 0); // new allocation cannot have negative pending reuse
+        assert(m_cache_table[tag].m_pending_reuses <= 0); // new allocated entry initialized to -1
+        m_cache_table[tag].m_pending_reuses = pending_reuses; 
+        if(pending_reuses > 0) {
+          // it is live
+          m_n_lives++; 
+        } else {
+          // it is dead
+          m_n_deads++;
+        }
+      }
+      void turn_live_to_dead(const tag_t &tag) {
+        assert(m_cache_table[tag].m_pending_reuses == 0);
+        m_cache_table[tag].m_pending_reuses = 0;
+        m_n_lives--; 
+        m_n_deads++;
+      }
+      void turn_dead_to_live(const tag_t &tag, int pending_reuse) {
+        assert(m_cache_table[tag].m_pending_reuses == 0);
+        m_cache_table[tag].m_pending_reuses = pending_reuse;
+        m_n_deads--; 
+        m_n_lives++;
+      }
       void dump();
       void process_fill_buffer();
 
@@ -99,6 +149,8 @@ class RFWithCache : public opndcoll_rfu_t {
       std::size_t m_size;
       std::size_t m_n_available;
       std::size_t m_n_locked;
+      std::size_t m_n_lives;
+      std::size_t m_n_deads;
       bool check_size() const;
       struct pair_hash {
         template <class T1, class T2>
@@ -111,16 +163,19 @@ class RFWithCache : public opndcoll_rfu_t {
       ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
       class CacheBlock {
        public:
+        CacheBlock() : m_pending_reuses{-1} {}
         void lock() { m_lock = true; }
         void unlock() { m_lock = false; }
         bool is_locked() { return m_lock; }
         void dump(const tag_t &tag) {
           std::stringstream ss;
           ss << (m_lock ? 'L' : 'U');
+          ss << " PR: " << m_pending_reuses; 
           DDDPRINTF("<" << tag.first << ", " << tag.second
                         << ">: " << ss.str());
         }
         bool m_lock = false;
+        int m_pending_reuses;
         // bool m_lock;
         // RFWithCache::op_t m_data;
         // size_t m_op_idx;
@@ -130,6 +185,11 @@ class RFWithCache : public opndcoll_rfu_t {
 
       class FillBuffer {
        public:
+       struct Entry {
+          tag_t m_tag;
+          int m_pending_reuse;
+        };
+
         bool find(const tag_t &tag) const;
         bool has_pending_writes() const;
         void flush() {
@@ -137,14 +197,16 @@ class RFWithCache : public opndcoll_rfu_t {
           m_redundant_write_tracker.clear();
         }
         void dump();
-        bool push_back(const tag_t &tag);
-        bool pop_front(tag_t &tag);
+        bool push_back(const Entry &entry);
+        bool pop_front(Entry &entry);
         size_t size() const { return m_buffer.size(); }
 
        private:
         std::unordered_map<tag_t, unsigned, pair_hash>
             m_redundant_write_tracker;
-        std::list<tag_t> m_buffer;
+        
+
+        std::list<Entry> m_buffer;
       };
       FillBuffer m_fill_buffer;
     };

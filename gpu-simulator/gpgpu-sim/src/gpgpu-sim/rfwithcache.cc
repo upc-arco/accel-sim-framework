@@ -173,6 +173,8 @@ bool RFWithCache::priority_func(
     std::list<unsigned> warps_in_ocs) const {
   assert(!lhs.empty() && !rhs.empty());
 
+  auto lhs_uid = lhs.get_uid();
+  auto rhs_uid = rhs.get_uid();
   auto lhs_wid = lhs.warp_id();
   auto lhs_dwid = lhs.dynamic_warp_id();
   auto rhs_wid = rhs.warp_id();
@@ -182,7 +184,10 @@ bool RFWithCache::priority_func(
   auto rhs_is_in_oc = std::find(warps_in_ocs.begin(), warps_in_ocs.end(),
                                 rhs_wid) != warps_in_ocs.end();
 
-  if (lhs_is_in_oc && rhs_is_in_oc) {
+  if (lhs_wid == rhs_wid) {
+    if (lhs_dwid != rhs_dwid) return lhs_dwid < rhs_dwid;  
+    return lhs_uid < rhs_uid;
+  } else if (lhs_is_in_oc && rhs_is_in_oc) {
     return lhs_dwid < rhs_dwid;
   } else if (!lhs_is_in_oc && rhs_is_in_oc) {
     return false;
@@ -313,6 +318,8 @@ RFWithCache::modified_collector_unit_t::RFCache::RFCache(
     : m_n_available{sz},
       m_rpolicy(sz),
       m_size(sz),
+      m_n_lives(0),
+      m_n_deads(0),
       m_n_locked{0},
       m_rfcache_stats(rfcache_stats),
       m_global_oc_id(global_oc_id) {
@@ -343,7 +350,7 @@ bool RFWithCache::modified_collector_unit_t::allocate(
   unsigned op = 0;
   for (auto src : srcs) {
     auto pending_reuses = (*inst_in_inp_reg)->arch_reg_pending_reuses.src[op]; // get the pending reuses to this source operand
-    auto access_status = m_rfcache.read_access(src, m_warp_id);
+    auto access_status = m_rfcache.read_access(src, pending_reuses, m_warp_id);
     if (access_status ==
         RFWithCache::modified_collector_unit_t::access_t::Miss) {
       // only for missed values we need to wait
@@ -369,7 +376,10 @@ bool RFWithCache::modified_collector_unit_t::allocate(
 
 RFWithCache::modified_collector_unit_t::access_t
 RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
+                                                             int pending_reuses,
                                                              unsigned wid) {
+  DDDPRINTF("Read Access Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuses)
+  assert(pending_reuses >= 0);
   tag_t tag(wid, regid);
   if (m_cache_table.find(tag) == m_cache_table.end()) {
     DDDPRINTF("Miss in cache table <" << tag.first << ", " << tag.second << ">")
@@ -391,6 +401,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
       assert(!had_replacement);
       m_n_available--;
+      allocate(tag, pending_reuses);
       // m_rpolicy.lock(tag);
     } else {
       // should replace an entry
@@ -400,8 +411,10 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       DDDPRINTF("Replaced PREG: <" << replaced_tag.first << ", "
                                    << replaced_tag.second << "> ")
       assert(!m_cache_table[replaced_tag].is_locked());
+      replace(replaced_tag);
       m_cache_table.erase(replaced_tag);
       m_cache_table.insert({tag, {}});
+      allocate(tag, pending_reuses);
     }
 
     lock(tag);  // wait for data from banks
@@ -416,6 +429,9 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     tag_t replaced_tag;
     auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
     assert(!had_replacement);
+    assert(m_cache_table[tag].m_pending_reuses > 0);
+    assert(--m_cache_table[tag].m_pending_reuses == pending_reuses);
+    if(pending_reuses == 0) turn_live_to_dead(tag);
     if (m_cache_table[tag].is_locked()) {
       // RF read pending
       // do nothing
@@ -424,6 +440,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     }
     dump();
     m_rfcache_stats.inc_read_hits(m_global_oc_id);
+    assert(check_size());
     return Hit;
   }
 }
@@ -516,20 +533,14 @@ bool RFWithCache::modified_collector_unit_t::can_be_allocated(
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::find(
     const tag_t &tag) const {
-  // if (std::find_if(m_buffer.begin(), m_buffer.end(),
-  //                  [&tag](const std::pair<unsigned, unsigned> &p) -> bool {
-  //                    return (tag.first == p.first) && (tag.second ==
-  //                    p.second);
-  //                  }) == m_buffer.end()) {
-  //   return false;
-  // }
-  // return true;
+ 
   return m_redundant_write_tracker.find(tag) != m_redundant_write_tracker.end();
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::check_size() const {
   return (m_n_available <= m_size) && (m_n_locked <= m_size) &&
-         (m_n_locked + m_n_available <= m_size);
+         (m_n_locked + m_n_available <= m_size) &&
+         (m_n_lives + m_n_deads + m_n_available == m_size);
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::
@@ -558,7 +569,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::unlock(const tag_t &tag) {
 
 void RFWithCache::modified_collector_unit_t::RFCache::dump() {
   DDDPRINTF("Cache Table S: " << m_size << " A: " << m_n_available
-                              << " L: " << m_n_locked)
+                              << " L: " << m_n_locked << " Li: " << m_n_lives <<" De: " << m_n_deads)
   for (auto b : m_cache_table) {
     auto &block = b.second;
 
@@ -581,6 +592,7 @@ void RFWithCache::step() {
 bool RFWithCache::writeback(warp_inst_t &inst) {
   assert(!inst.empty());
   std::list<unsigned> regs = m_shader->get_regs_written(inst);
+  unsigned req_per_inst = 0;
   for (unsigned op = 0; op < MAX_REG_OPERANDS; op++) {
     int reg_num = inst.arch_reg.dst[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
@@ -594,15 +606,17 @@ bool RFWithCache::writeback(warp_inst_t &inst) {
             bank,
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
-        m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num);
+        assert(inst.arch_reg_pending_reuses.dst[op] >= 0);
+        m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num, inst.arch_reg_pending_reuses.dst[op]);
         inst.arch_reg.dst[op] = -1;
         inst.arch_reg_pending_reuses.dst[op] = -1;
+        req_per_inst++;
       } else {
         return false;
       }
     }
   }
-
+//  assert(req_per_inst == 1);
   return true;
 }
 void RFWithCache::cache_cycle() {
@@ -628,26 +642,25 @@ void RFWithCache::process_writes() {
       oc_wreqs++;
       m_rfcache_stats.inc_writes(m_shdr->get_sid());
       auto req = m_write_reqs.pop(oc_id);
-      if (req.first != curr_wid) {
+      if (req.wid() != curr_wid) {
         wreq_to_preempted_oc = true;
         continue;
       }
 
-      oc->process_write(req.second);
+      oc->process_write(req.regid(), req.pending_reuses());
     }
-    DDDPRINTF("RF Writes: OCID: " << oc_id << " tot_reqs: " << oc_wreqs << " "
-                                  << (wreq_to_preempted_oc ? "P" : "NP"))
+    DDDPRINTF("RF Writes: OCID: " << oc_id << " tot_reqs: " << oc_wreqs << " ")
   }
   assert(m_write_reqs.size() == 0);
 }
 
 void RFWithCache::WriteReqs::push(unsigned oc_id, unsigned wid,
-                                  unsigned regid) {
-  std::pair<unsigned, unsigned> req = std::make_pair(wid, regid);
-  m_write_reqs[oc_id].push_back(req);
+                                  unsigned regid, int pending_reuse) {
+  
+  m_write_reqs[oc_id].push_back(WriteReq(wid, regid, pending_reuse));
   m_size++;
   DDDPRINTF("Push WRQ: <" << oc_id << ", " << wid << ", " << regid << ">"
-                          << " S: " << m_size)
+                          << " S: " << m_size << " PR: " << pending_reuse)
 }
 
 bool RFWithCache::WriteReqs::has_req(unsigned oc_id) const {
@@ -660,7 +673,7 @@ void RFWithCache::WriteReqs::flush(unsigned oc_id) {
   m_write_reqs.erase(oc_id);
 }
 
-std::pair<unsigned, unsigned> RFWithCache::WriteReqs::pop(unsigned oc_id) {
+RFWithCache::WriteReqs::WriteReq RFWithCache::WriteReqs::pop(unsigned oc_id) {
   assert(m_write_reqs.find(oc_id) != m_write_reqs.end());
   auto result = m_write_reqs[oc_id].back();
   m_write_reqs[oc_id].pop_back();
@@ -668,8 +681,8 @@ std::pair<unsigned, unsigned> RFWithCache::WriteReqs::pop(unsigned oc_id) {
     m_write_reqs.erase(oc_id);
   }
   m_size--;
-  DDPRINTF("Pop WRQ: <" << oc_id << ", " << result.first << ", "
-                        << result.second << "> S: " << m_size)
+  DDPRINTF("Pop WRQ: <" << oc_id << ", " << result.m_wid << ", "
+                        << result.m_regid << "> S: " << m_size << " PR: " << result.m_pendign_reuse)
   return result;
 }
 
@@ -688,19 +701,25 @@ void RFWithCache::modified_collector_unit_t::RFCache::flush() {
   /*remove everything in cache and fill buffer*/
   assert(m_n_locked == 0);
   m_n_available = m_size;
+  m_n_lives = 0;
+  m_n_deads = 0;
   m_rpolicy.reset();
   m_cache_table.clear();
   m_fill_buffer.flush();
 }
 
-void RFWithCache::modified_collector_unit_t::process_write(unsigned regid) {
-  m_rfcache.write_access(m_warp_id, regid);
+void RFWithCache::modified_collector_unit_t::process_write(unsigned regid, int pending_reuse) {
+  assert(pending_reuse >= 0);
+  m_rfcache.write_access(m_warp_id, regid, pending_reuse);
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::write_access(
-    unsigned wid, unsigned regid) {
-  DDDPRINTF("Write Access Regid: " << regid)
+    unsigned wid, unsigned regid, int pending_reuse) {
+  DDDPRINTF("Write Access " << "Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuse)
   tag_t tag(wid, regid);
+  RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::Entry entry;
+  entry.m_tag = tag;
+  entry.m_pending_reuse = pending_reuse;
   if (m_cache_table.find(tag) != m_cache_table.end()) {
     // register found in the table
     auto &block = m_cache_table[tag];
@@ -711,6 +730,11 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
     tag_t replaced_tag;
     bool had_replacement = m_rpolicy.refer(tag, replaced_tag);
     assert(!had_replacement);
+    // rewriting a register
+    assert(block.m_pending_reuses == 0 || block.m_pending_reuses == pending_reuse); // wheather rewrite in two different insts or multiple writes because of one memory inst
+    replace(tag); // value is dead and it could be replaced with a live or dead value depending on the pending_reuse value
+    allocate(tag, pending_reuse);
+    assert(check_size());
   } else {
     // register not found in the table
     // if fill buffer has entries try to put the value in the fill buffer
@@ -720,11 +744,11 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
       // search in the fill buffer
       if (m_fill_buffer.find(tag)) {
         // fill buffer has pending write to the same reg
-        auto was_not_first = m_fill_buffer.push_back(tag);
+        auto was_not_first = m_fill_buffer.push_back(entry);
         assert(was_not_first);
       } else {
         // there is no pending write to the same reg
-        auto was_not_first = m_fill_buffer.push_back(tag);
+        auto was_not_first = m_fill_buffer.push_back(entry);
         assert(!was_not_first);
       }
     } else {
@@ -738,6 +762,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
         tag_t replaced_tag;
         auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
         assert(!had_replacement);
+        allocate(tag, pending_reuse);
         assert(check_size());
       } else {
         // all entries are locked -> add to fill buffer
@@ -745,7 +770,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
         if (m_n_locked == m_size) {
           // all entries are locked
           // add to the fill buffer
-          auto was_not_first = m_fill_buffer.push_back(tag);
+          auto was_not_first = m_fill_buffer.push_back(entry);
           assert(!was_not_first);
         } else {
           // there is replacement available
@@ -755,15 +780,18 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
           assert(had_replacement);
           assert((m_cache_table.find(replaced_tag) != m_cache_table.end()) &&
                  !m_cache_table[replaced_tag].is_locked());
+          replace(replaced_tag);
           m_cache_table.erase(
               replaced_tag);  // remove replaced entry from table
           m_cache_table.insert({tag, {}});
+          allocate(tag, pending_reuse);
           assert(check_size());
         }
       }
     }
   }
   dump();
+  assert(check_size());
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::dump() {
@@ -771,7 +799,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::dump() {
     DDDPRINTF("Fill Buffer")
     std::stringstream ss;
     for (auto pending_writes : m_buffer) {
-      ss << "<" << pending_writes.first << ", " << pending_writes.second
+      ss << "<" << pending_writes.m_tag.first << ", " << pending_writes.m_tag.second
          << "> ";
     }
     ss << std::endl;
@@ -785,10 +813,10 @@ void RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::dump() {
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::push_back(
-    const tag_t &tag) {
-  m_buffer.push_back(tag);
-  m_redundant_write_tracker[tag]++;
-  return (m_redundant_write_tracker[tag] > 1);
+    const RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::Entry &entry) {
+  m_buffer.push_back(entry);
+  m_redundant_write_tracker[entry.m_tag]++;
+  return (m_redundant_write_tracker[entry.m_tag] > 1);
 }
 
 void RFWithCache::process_fill_buffer() {
@@ -805,20 +833,22 @@ void RFWithCache::modified_collector_unit_t::process_fill_buffer() {
 
 void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
   if (m_fill_buffer.has_pending_writes()) {
-    tag_t tag;
-    auto has_no_pending_updates = m_fill_buffer.pop_front(tag);
+    assert(1);
+    RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::Entry entry;
+    auto has_no_pending_updates = m_fill_buffer.pop_front(entry);
     if (has_no_pending_updates) {
-      assert(m_cache_table.find(tag) == m_cache_table.end());
+      assert(m_cache_table.find(entry.m_tag) == m_cache_table.end());
       // there is pending write in the fill buffer
       if (m_n_available > 0) {
         // there is available entry in the cache
         // replacement not required
         tag_t replaced_tag;
-        auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+        auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
         assert(!had_replacement);
-        m_cache_table.insert({tag, {}});
+        m_cache_table.insert({entry.m_tag, {}});
+        allocate(entry.m_tag, entry.m_pending_reuse);
         m_n_available--;
-
+        assert(check_size());
       } else {
         // no available entry
         if (m_n_locked == m_size) {
@@ -827,12 +857,15 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
         } else {
           // replacement should happen
           tag_t replaced_tag;
-          auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+          auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
           assert(had_replacement);
           assert(m_cache_table.find(replaced_tag) != m_cache_table.end());
           assert(!m_cache_table[replaced_tag].is_locked());
+          replace(replaced_tag);
           m_cache_table.erase(replaced_tag);
-          m_cache_table.insert({tag, {}});
+          m_cache_table.insert({entry.m_tag, {}});
+          allocate(entry.m_tag, entry.m_pending_reuse);
+          assert(check_size());
         }
       }
     } else {
@@ -846,14 +879,14 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::pop_front(
-    tag_t &front_tag) {
-  front_tag = m_buffer.front();
+    Entry &front_entry) {
+  front_entry = m_buffer.front();
   m_buffer.pop_front();
-  assert(m_redundant_write_tracker.find(front_tag) !=
+  assert(m_redundant_write_tracker.find(front_entry.m_tag) !=
          m_redundant_write_tracker.end());
-  auto pending_updates = --m_redundant_write_tracker[front_tag];
+  auto pending_updates = --m_redundant_write_tracker[front_entry.m_tag];
   if (!pending_updates) {
-    m_redundant_write_tracker.erase(front_tag);
+    m_redundant_write_tracker.erase(front_entry.m_tag);
   }
   return (pending_updates == 0);
 }
