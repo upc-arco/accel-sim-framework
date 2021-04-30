@@ -429,9 +429,12 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     tag_t replaced_tag;
     auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
     assert(!had_replacement);
-    assert(m_cache_table[tag].m_pending_reuses > 0);
-    assert(--m_cache_table[tag].m_pending_reuses == pending_reuses);
-    if(pending_reuses == 0) turn_live_to_dead(tag);
+    //assert(m_cache_table[tag].m_pending_reuses > 0);
+    //assert(--m_cache_table[tag].m_pending_reuses == pending_reuses);
+    // we always should trust info from traces
+    replace(tag); // it's like replace current info with new info from traces
+    allocate(tag, pending_reuses);
+    //if(pending_reuses == 0) turn_live_to_dead(tag);
     if (m_cache_table[tag].is_locked()) {
       // RF read pending
       // do nothing
@@ -597,11 +600,11 @@ bool RFWithCache::writeback(warp_inst_t &inst) {
     int reg_num = inst.arch_reg.dst[op];  // this math needs to match that used
                                           // in function_info::ptx_decode_inst
     if (reg_num >= 0) {                   // valid register
+      DDDPRINTF("Writeback " << (inst.op_pipe == MEM__OP ? 'M' : 'A') << " Wid: " << inst.warp_id() << " Regid: " << reg_num << " PR: " << inst.arch_reg_pending_reuses.dst[op])
       unsigned bank = register_bank(reg_num, inst.warp_id(), m_num_banks,
                                     m_bank_warp_shift, sub_core_model,
                                     m_num_banks_per_sched, inst.get_schd_id());
       if (m_arbiter->bank_idle(bank)) {
-        DDDPRINTF("Writeback " << (inst.op_pipe == MEM__OP ? 'M' : 'A'))
         m_arbiter->allocate_bank_for_write(
             bank,
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,

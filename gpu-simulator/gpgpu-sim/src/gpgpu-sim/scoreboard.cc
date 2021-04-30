@@ -73,6 +73,7 @@ void Scoreboard::releaseRegister(unsigned wid, unsigned regnum) {
   if (!(reg_table[wid].find(regnum) != reg_table[wid].end())) return;
   SHADER_DPRINTF(SCOREBOARD, "Release register - warp:%d, reg: %d\n", wid,
                  regnum);
+  DDDPRINTF("Release Reg: " <<  regnum << " Wid: " << wid)
   reg_table[wid].erase(regnum);
 }
 
@@ -86,6 +87,7 @@ void Scoreboard::reserveRegisters(const class warp_inst_t* inst) {
       reserveRegister(inst->warp_id(), inst->out[r]);
       SHADER_DPRINTF(SCOREBOARD, "Reserved register - warp:%d, reg: %d\n",
                      inst->warp_id(), inst->out[r]);
+      DDDPRINTF("Reserve Reg: " <<  inst->out[r] << " Wid: " << inst->warp_id())
     }
   }
 
