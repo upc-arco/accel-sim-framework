@@ -81,14 +81,13 @@ std::vector<fs::path> Traces::get_dir_content(const fs::path &p) const
 
 void Traces::parse()
 {
+    //unsigned num_analyzed = 1;
     unsigned num_analyzed = 0;
     for (auto it = m_trace_files.begin(); it != m_trace_files.end();)
     {
         auto &trace = *it;
-        //auto &trace = m_trace_files.front();
+    //    auto &trace = m_trace_files.front();
         trace->parse();
-        //trace.reuse_analysis();
-        //trace.write_reuse_trace();
         delete trace;
         trace = nullptr;
         it = m_trace_files.erase(it);

@@ -7,6 +7,7 @@
 
 #include "trace_file.h"
 #include "debug.h"
+#include "warp_reuse_distance.h"
 
 TraceFile::TraceFile(const fs::path &path)
     : m_path{path.parent_path()}, m_filename{path.filename()}
@@ -33,6 +34,16 @@ void TraceFile::parse()
     {
         throw std::runtime_error("cannot open file " + (m_path / reuse_trace_fname).string());
     }
+
+    /*---------------------Open reuse distance file------------------------*/
+    auto rdistance_trace_fname = m_filename.stem();
+    rdistance_trace_fname += ".rdtrace";
+    DPRINTF("Writing Reuse Distance Trace " << (m_path / rdistance_trace_fname) << " Started")
+    std::ofstream rdist_trace_file(m_path / rdistance_trace_fname);
+    if (!rdist_trace_file)
+    {
+        throw std::runtime_error("cannot open file " + (m_path / rdistance_trace_fname).string());
+    }
     /*---------------------------------------------*/
 
     std::string line;                    // each line read from trace file
@@ -46,7 +57,8 @@ void TraceFile::parse()
     std::vector<std::vector<std::vector<unsigned>>> warps_inst_srcs; // Inst srcs
     std::vector<std::vector<std::vector<unsigned>>> warps_inst_dsts; // Inst dsts
     std::vector<WarpPendingAccesses *> warps_pending_reuses;         // warps pending tracker
-
+    std::vector<WarpReuseDistance *> warps_reuse_distances; // Warps reuse distance tracker
+    
     while (std::getline(trace_file, line))
     {
         // read trace file line by line
@@ -62,6 +74,7 @@ void TraceFile::parse()
             if (next_warp_id == chunck_size)
             {
                 assert(warps_pending_reuses.size() == warps_inst_srcs.size());
+                assert(warps_reuse_distances.size() == warps_pending_reuses.size());
                 assert(warps_inst_srcs.size() == warps_inst_dsts.size());
                 assert(warps_inst_dsts.size() == chunck_size);
                 auto warp_inst_srcs = warps_inst_srcs.begin();
@@ -72,19 +85,27 @@ void TraceFile::parse()
                     assert(warp_pending_reuses);
                     // if new warp started we should write last warp reuse info
                     assert(warp_inst_srcs->size() == warp_inst_dsts->size()); // n_srcs = n_dsts
+                    auto &warp_reuse_distance = warps_reuse_distances[warp_offset];
+                    assert(warp_reuse_distance);
                     warp_pending_reuses->done_adding_reg_use();
+                    warp_reuse_distance->done_adding_reg_use();
                     reuse_trace_file << "DWID = " << chunk_id * chunck_size + warp_offset << std::endl;
+                    rdist_trace_file << "DWID = " << chunk_id * chunck_size + warp_offset << std::endl;
                     writen_lines++;
                     for (auto inst_reg_srcs = warp_inst_srcs->begin(), inst_reg_dsts = warp_inst_dsts->begin(); inst_reg_srcs != warp_inst_srcs->end(); inst_reg_srcs++, inst_reg_dsts++)
                     {
                         reuse_trace_file << warp_pending_reuses->update_pending_reuses(*inst_reg_dsts, *inst_reg_srcs) << std::endl;
+                        rdist_trace_file << warp_reuse_distance->update_reuse_distance(*inst_reg_dsts, *inst_reg_srcs) << std::endl;
                         writen_lines++;
                     }
                     warp_inst_srcs++;
                     warp_inst_dsts++;
                     warp_offset++;
                     delete warp_pending_reuses;
+                    assert(warp_reuse_distance->all_insts_covered());
+                    delete warp_reuse_distance;
                     warp_pending_reuses = nullptr;
+                    warp_reuse_distance = nullptr;
                 }
 
                 assert(warp_inst_srcs == warps_inst_srcs.end());
@@ -95,10 +116,12 @@ void TraceFile::parse()
                 warps_inst_srcs.clear();
                 warps_inst_dsts.clear();
                 warps_pending_reuses.clear();
+                warps_reuse_distances.clear();
             }
             warps_inst_srcs.push_back({});
             warps_inst_dsts.push_back({});
             warps_pending_reuses.push_back(new WarpPendingAccesses(chunk_id * chunck_size + next_warp_id)); // add per warp access tracker
+            warps_reuse_distances.push_back(new WarpReuseDistance(chunk_id * chunck_size + next_warp_id)); // add per warp reuse distance tracker
             next_warp_id++;
             continue;
         }
@@ -107,6 +130,7 @@ void TraceFile::parse()
         std::vector<unsigned> dsts;
         parse_line(line, dsts, srcs);
         warps_pending_reuses.back()->add_reg_use(dsts, srcs);
+        warps_reuse_distances.back()->add_reg_reuse(dsts,srcs);
         warps_inst_dsts.back().push_back(dsts);
         warps_inst_srcs.back().push_back(srcs);
         //m_reg_accesses[dwid].push_back(reg_accesses);
@@ -115,6 +139,7 @@ void TraceFile::parse()
     {
         // for the last chunk
         assert(warps_pending_reuses.size() == warps_inst_srcs.size());
+        assert(warps_reuse_distances.size() == warps_pending_reuses.size());
         assert(warps_inst_srcs.size() == warps_inst_dsts.size());
         assert(warps_inst_dsts.size() <= chunck_size);
 
@@ -124,31 +149,43 @@ void TraceFile::parse()
         for (auto &warp_pending_reuses : warps_pending_reuses)
         {
             assert(warp_pending_reuses);
+            auto &warp_reuse_distance = warps_reuse_distances[warp_offset];
+            assert(warp_reuse_distance);
             // if new warp started we should write last warp reuse info
             assert(warp_inst_srcs->size() == warp_inst_dsts->size()); // n_srcs = n_dsts
             warp_pending_reuses->done_adding_reg_use();
+            warp_reuse_distance->done_adding_reg_use();
             reuse_trace_file << "DWID = " << chunk_id * chunck_size + warp_offset << std::endl;
+            rdist_trace_file << "DWID = " << chunk_id * chunck_size + warp_offset << std::endl;
             writen_lines++;
             for (auto inst_reg_srcs = warp_inst_srcs->begin(), inst_reg_dsts = warp_inst_dsts->begin(); inst_reg_srcs != warp_inst_srcs->end(); inst_reg_srcs++, inst_reg_dsts++)
             {
                 reuse_trace_file << warp_pending_reuses->update_pending_reuses(*inst_reg_dsts, *inst_reg_srcs) << std::endl;
+                rdist_trace_file << warp_reuse_distance->update_reuse_distance(*inst_reg_dsts, *inst_reg_srcs) << std::endl;
                 writen_lines++;
             }
             warp_inst_srcs++;
             warp_inst_dsts++;
             warp_offset++;
+            
             delete warp_pending_reuses;
+            warp_pending_reuses = nullptr;
+            assert(warp_reuse_distance->all_insts_covered());
+            delete warp_reuse_distance;
+            warp_reuse_distance = nullptr;
         }
         assert(warp_inst_srcs == warps_inst_srcs.end());
         assert(warp_inst_dsts == warps_inst_dsts.end());
         warps_inst_dsts.clear();
         warps_inst_srcs.clear();
         warps_pending_reuses.clear();
+        warps_reuse_distances.clear();
     }
 
     /*----------------------closing files--------------------*/
     trace_file.close();
     reuse_trace_file.close();
+    rdist_trace_file.close(); // close reuse distance trace file
     /*-------------------------------------------------------*/
 
     DPRINTF(parsed_lines << " lines parsed " << writen_lines << " lines written")
