@@ -130,6 +130,7 @@ void inst_memadd_info_t::base_delta_decompress(
 
 bool inst_trace_t::parse_from_string(std::string trace,
                                      std::string pending_reuse_trace,
+                                     std::string reuse_distance_trace,
                                      unsigned trace_version) {
 
 
@@ -142,6 +143,17 @@ bool inst_trace_t::parse_from_string(std::string trace,
     pr_token.erase(pr_token.find_last_not_of(chars) + 1);
     if(pr_token.length() == 0) continue; 
     pending_reuses.push_back(stoi(pr_token));
+  }
+
+  std::stringstream reuse_distance_str(reuse_distance_trace);
+  std::string rd_token;
+  std::vector<int> reuse_distances;
+  while(getline(reuse_distance_str, rd_token, ',')) {
+    const std::string& chars = "\t\n\v\f\r ";
+    rd_token.erase(0, rd_token.find_first_not_of(chars));
+    rd_token.erase(rd_token.find_last_not_of(chars) + 1);
+    if(rd_token.length() == 0) continue; 
+    reuse_distances.push_back(stoi(rd_token));
   }
 
   std::stringstream ss;
@@ -171,7 +183,8 @@ bool inst_trace_t::parse_from_string(std::string trace,
   for (unsigned i = 0; i < reg_dsts_num; ++i) {
     ss >> temp;
     sscanf(temp.c_str(), "R%d", &reg_dest[i]);
-    reg_dest_pending_reuse.push_back(pending_reuses.at(dst_src_offset++));
+    reg_dest_pending_reuse.push_back(pending_reuses.at(dst_src_offset));
+    reg_dest_reuse_distance.push_back(reuse_distances.at(dst_src_offset++));
   }
 
   ss >> opcode;
@@ -181,9 +194,11 @@ bool inst_trace_t::parse_from_string(std::string trace,
   for (unsigned i = 0; i < reg_srcs_num; ++i) {
     ss >> temp;
     sscanf(temp.c_str(), "R%d", &reg_src[i]);
-    reg_src_pending_reuse.push_back(pending_reuses.at(dst_src_offset++));
+    reg_src_pending_reuse.push_back(pending_reuses.at(dst_src_offset));
+    reg_src_reuse_distance.push_back(reuse_distances.at(dst_src_offset++));
   }
   assert(dst_src_offset == pending_reuses.size());
+  assert(dst_src_offset == reuse_distances.size());
   
   // parse mem info
   unsigned address_mode = 0;
@@ -312,6 +327,17 @@ trace_parser::parse_kernel_info(const std::string &kerneltraces_filepath) {
   }
   std::cout << "Pending reuse trace " << pending_reuse_trace_path << " loaded" << std::endl;
 
+  auto reuse_distance_trace_path = kerneltraces_filepath; // get kernel path
+  dot_pos = reuse_distance_trace_path.find_last_of('.'); // find dot position
+  assert(dot_pos != std::string::npos);
+  reuse_distance_trace_path.replace(dot_pos + 1, std::string::npos, "rdtrace"); // replace kernel trace extension 
+  m_reuse_distance_trace.open(reuse_distance_trace_path.c_str()); // open reuse distance trace file
+  if (!m_reuse_distance_trace.is_open()) {
+    std::cout << "Unable to open file: " << reuse_distance_trace_path << std::endl;
+    exit(1);
+  }
+  std::cout << "Reuse distance trace " << reuse_distance_trace_path << " loaded" << std::endl;
+
   kernel_trace_t kernel_info;
 
   std::string line;
@@ -385,6 +411,8 @@ void trace_parser::kernel_finalizer() {
     ifs.close();
     assert(m_pending_reuse_trace.is_open());
     m_pending_reuse_trace.close();
+    assert(m_reuse_distance_trace.is_open());
+    m_reuse_distance_trace.close();
   }
 }
 
@@ -439,6 +467,11 @@ bool trace_parser::get_next_threadblock_traces(
         getline(m_pending_reuse_trace, pending_reuse_trace_line);
         assert(pending_reuse_trace_line.find("DWID") != std::string::npos);
 
+        assert(m_reuse_distance_trace.is_open());
+        std::string reuse_distance_trace_line;
+        getline(m_reuse_distance_trace, reuse_distance_trace_line);
+        assert(reuse_distance_trace_line.find("DWID") != std::string::npos);
+
       } else if (string1 == "insts") {
         assert(start_of_tb_stream_found);
         sscanf(line.c_str(), "insts = %d", &insts_num);
@@ -452,9 +485,13 @@ bool trace_parser::get_next_threadblock_traces(
         std::string pending_reuse_trace_line;
         getline(m_pending_reuse_trace, pending_reuse_trace_line);
 
+        assert(m_reuse_distance_trace.is_open());
+        std::string reuse_distance_trace_line;
+        getline(m_reuse_distance_trace, reuse_distance_trace_line);
+
         threadblock_traces[warp_id]
             ->at(inst_count)
-            .parse_from_string(line, pending_reuse_trace_line, trace_version);
+            .parse_from_string(line, pending_reuse_trace_line, reuse_distance_trace_line, trace_version);
         inst_count++;
       }
     }

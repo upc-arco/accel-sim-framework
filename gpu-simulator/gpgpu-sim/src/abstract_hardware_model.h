@@ -916,7 +916,9 @@ class inst_t {
       arch_reg.src[i] = -1;
       arch_reg.dst[i] = -1;
       arch_reg_pending_reuses.dst[i] = -1;
+      arch_reg_reuse_distances.dst[i] = -2;
       arch_reg_pending_reuses.src[i] = -1;
+      arch_reg_reuse_distances.src[i] = -2;
     }
     isize = 0;
   }
@@ -979,6 +981,11 @@ class inst_t {
     int dst[MAX_REG_OPERANDS];
     int src[MAX_REG_OPERANDS];
   } arch_reg_pending_reuses;
+
+  struct {
+    int dst[MAX_REG_OPERANDS];
+    int src[MAX_REG_OPERANDS];
+  } arch_reg_reuse_distances;
   // int arch_reg[MAX_REG_OPERANDS]; // register number for bank conflict
   // evaluation
   unsigned latency;  // operation latency

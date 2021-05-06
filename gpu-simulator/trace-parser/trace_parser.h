@@ -54,13 +54,15 @@ struct inst_trace_t {
   unsigned reg_dsts_num;
   unsigned reg_dest[MAX_DST];
   std::vector<unsigned> reg_dest_pending_reuse;
+  std::vector<int> reg_dest_reuse_distance;
   std::string opcode;
   unsigned reg_srcs_num;
   unsigned reg_src[MAX_SRC];
   std::vector<unsigned> reg_src_pending_reuse;
+  std::vector<int> reg_src_reuse_distance;
   inst_memadd_info_t *memadd_info;
 
-  bool parse_from_string(std::string trace, std::string pending_reuse_trace, unsigned tracer_version);
+  bool parse_from_string(std::string trace, std::string pending_reuse_trace, std::string reuse_distance_trace, unsigned tracer_version);
 
   bool check_opcode_contain(const std::vector<std::string> &opcode,
                             std::string param) const;
@@ -115,6 +117,7 @@ private:
   std::string kernellist_filename;
   std::ifstream ifs;
   std::ifstream m_pending_reuse_trace;
+  std::ifstream m_reuse_distance_trace;
 };
 
 #endif

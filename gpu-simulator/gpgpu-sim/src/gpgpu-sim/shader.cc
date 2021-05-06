@@ -4349,6 +4349,7 @@ bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
                  m_num_banks_per_sched, inst.get_schd_id()));
         inst.arch_reg.dst[op] = -1;
         inst.arch_reg_pending_reuses.dst[op] = -1;
+        inst.arch_reg_reuse_distances.dst[op] = -2;
       } else {
         return false;
       }

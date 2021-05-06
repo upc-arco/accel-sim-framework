@@ -474,15 +474,21 @@ std::vector<unsigned> RFWithCache::modified_collector_unit_t::get_src_ops(
     if (reg_num < 0) {                    // valid register
       m_src_op[op] = op_t();
       assert(inst.arch_reg_pending_reuses.src[op] == -1); // sanity check for pending reuse traces
+      assert(inst.arch_reg_reuse_distances.src[op] == -2);
     } else {
       srcs.push_back(reg_num);
-      assert(inst.arch_reg_pending_reuses.src[op] >= 0); // sanity check for pending reuse traces
+      assert((inst.arch_reg_pending_reuses.src[op] > 0) || 
+            (inst.arch_reg_pending_reuses.src[op] == 0 && 
+              inst.arch_reg_reuse_distances.src[op] == -1)); // if there is no pending reuse then reuse distance should be -1
     }
     // ------ sanity check for consistent pending reuse traces
     if(inst.arch_reg.dst[op] <0){
       assert(inst.arch_reg_pending_reuses.dst[op] == -1);
+      assert(inst.arch_reg_reuse_distances.dst[op] == -2);
     } else {
-      assert(inst.arch_reg_pending_reuses.dst[op] >=0);
+      assert((inst.arch_reg_pending_reuses.dst[op] > 0) ||
+              (inst.arch_reg_pending_reuses.dst[op] == 0 && 
+                inst.arch_reg_reuse_distances.dst[op] == -1)); // if there is no pending reuse then reuse distance should be -1
     }
     // -----------
   }
@@ -613,6 +619,7 @@ bool RFWithCache::writeback(warp_inst_t &inst) {
         m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num, inst.arch_reg_pending_reuses.dst[op]);
         inst.arch_reg.dst[op] = -1;
         inst.arch_reg_pending_reuses.dst[op] = -1;
+        inst.arch_reg_reuse_distances.dst[op] = -2;
         req_per_inst++;
       } else {
         return false;
