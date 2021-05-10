@@ -44,19 +44,22 @@ class RFWithCache : public opndcoll_rfu_t {
     public:
     class WriteReq {
       public:
-        WriteReq(unsigned wid, unsigned regid, int pending_reuse) : m_wid{wid}, m_regid{regid}, m_pending_reuse{pending_reuse} {
+        WriteReq(unsigned wid, unsigned regid, int pending_reuse, int reuse_distance) : m_wid{wid}, m_regid{regid}, m_pending_reuse{pending_reuse}, m_reuse_distance{reuse_distance} {
           assert(pending_reuse >= 0);
+          assert(reuse_distance > -2);
         }
         unsigned wid() const { return m_wid; }
         unsigned regid() const { return m_regid; }
         int pending_reuses() const { return m_pending_reuse; }
+        int reuse_distance() const { return m_reuse_distance; }
       private:
         unsigned m_wid;
         unsigned m_regid;
         int m_pending_reuse;
+        int m_reuse_distance;
     };
 
-    void push(unsigned oc_id, unsigned wid, unsigned regid, int pending_reuse);
+    void push(unsigned oc_id, unsigned wid, unsigned regid, int pending_reuse, int reuse_distance);
     bool has_req(unsigned oc_id) const;
     void flush(unsigned oc_id);
     WriteReq pop(unsigned oc_id);
@@ -89,7 +92,7 @@ class RFWithCache : public opndcoll_rfu_t {
       Miss,
     };
     void collect_operand(unsigned op) override;
-    void process_write(unsigned regid, int pending_reuse);
+    void process_write(unsigned regid, int pending_reuse, int reuse_distance);
     void process_fill_buffer();
 
    private:
@@ -99,9 +102,9 @@ class RFWithCache : public opndcoll_rfu_t {
      public:
       RFCache(std::size_t sz, RFCacheStats &rfcache_stats,
               unsigned global_oc_id);
-      access_t read_access(unsigned regid, int pending_reuses, unsigned wid);
+      access_t read_access(unsigned regid, int pending_reuses, int reuse_distance, unsigned wid);
       void flush();
-      void write_access(unsigned wid, unsigned regid, int pending_reuse);
+      void write_access(unsigned wid, unsigned regid, int pending_reuse, int reuse_distance);
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
       void lock(const tag_t &tag);
       void unlock(const tag_t &tag);
@@ -110,22 +113,43 @@ class RFWithCache : public opndcoll_rfu_t {
         if(m_cache_table[tag].m_pending_reuses > 0) {
           assert(m_n_lives > 0);
           m_n_lives--;
+
+          // update min reuse distance for live values
+          if (m_cache_table[tag].m_reuse_distance == m_min_reues_distance) {
+            // in case we replace min reuse distance element we should recompute min reuse distance
+            m_min_reues_distance = comp_min_rd();
+            assert(m_n_lives == 0 || (m_n_lives > 0 && m_min_reues_distance != static_cast<unsigned>(-1)));
+          }
         } else if (m_cache_table[tag].m_pending_reuses == 0) {
           assert(m_n_deads > 0);
           m_n_deads--;
+
+          // we don't compute reuse distance for dead vals
         }
         m_cache_table[tag].m_pending_reuses = -1; // when we use replacement to multiple writes to the same reg pending reuse will be owerwritten by allocate 
+      
       }
-      void allocate(const tag_t &tag, int pending_reuses) { 
-        assert(pending_reuses >= 0); // new allocation cannot have negative pending reuse
+      void allocate(const tag_t &tag, int pending_reuses, int reuse_distance) { 
+        assert((pending_reuses > 0 && reuse_distance > 0) || (pending_reuses == 0 && reuse_distance == -1)); // new allocation cannot have negative pending reuse 
+                                                                                                            // reuse distance = -1 when no pending otherwise it is positive     
         assert(m_cache_table[tag].m_pending_reuses <= 0); // new allocated entry initialized to -1
-        m_cache_table[tag].m_pending_reuses = pending_reuses; 
+        assert(m_cache_table[tag].m_reuse_distance <= -1); // whether it is  a new entry or there is no reuse t this entry
+        m_cache_table[tag].m_pending_reuses = pending_reuses;
+        m_cache_table[tag].m_reuse_distance = reuse_distance; 
         if(pending_reuses > 0) {
           // it is live
           m_n_lives++; 
         } else {
           // it is dead
           m_n_deads++;
+        }
+        if (reuse_distance > -1) {
+          // this is a live value and has a reuse distence
+          // we only compute min reuse distance based on live values
+          if ( reuse_distance < m_min_reues_distance) {
+            // new reuse distance changes the minimum
+            m_min_reues_distance = reuse_distance; // update min reuse distance
+          } 
         }
       }
       void turn_live_to_dead(const tag_t &tag) {
@@ -151,7 +175,9 @@ class RFWithCache : public opndcoll_rfu_t {
       std::size_t m_n_locked;
       std::size_t m_n_lives;
       std::size_t m_n_deads;
-      bool check_size() const;
+      unsigned m_min_reues_distance;
+      bool check() const;
+      unsigned comp_min_rd() const;
       struct pair_hash {
         template <class T1, class T2>
         std::size_t operator()(const std::pair<T1, T2> &p) const {
@@ -163,7 +189,7 @@ class RFWithCache : public opndcoll_rfu_t {
       ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
       class CacheBlock {
        public:
-        CacheBlock() : m_pending_reuses{-1} {}
+        CacheBlock() : m_pending_reuses{-1}, m_reuse_distance{-2}, m_lock{false} {}
         void lock() { m_lock = true; }
         void unlock() { m_lock = false; }
         bool is_locked() { return m_lock; }
@@ -171,14 +197,13 @@ class RFWithCache : public opndcoll_rfu_t {
           std::stringstream ss;
           ss << (m_lock ? 'L' : 'U');
           ss << " PR: " << m_pending_reuses; 
+          ss << " RD: " << m_reuse_distance;
           DDDPRINTF("<" << tag.first << ", " << tag.second
                         << ">: " << ss.str());
         }
-        bool m_lock = false;
+        bool m_lock;
         int m_pending_reuses;
-        // bool m_lock;
-        // RFWithCache::op_t m_data;
-        // size_t m_op_idx;
+        int m_reuse_distance;
       };
       using cache_table_t = std::unordered_map<tag_t, CacheBlock, pair_hash>;
       cache_table_t m_cache_table;
@@ -188,6 +213,7 @@ class RFWithCache : public opndcoll_rfu_t {
        struct Entry {
           tag_t m_tag;
           int m_pending_reuse;
+          int m_reuse_distance;
         };
 
         bool find(const tag_t &tag) const;

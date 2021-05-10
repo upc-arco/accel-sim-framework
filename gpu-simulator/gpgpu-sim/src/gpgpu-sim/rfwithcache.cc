@@ -320,6 +320,7 @@ RFWithCache::modified_collector_unit_t::RFCache::RFCache(
       m_size(sz),
       m_n_lives(0),
       m_n_deads(0),
+      m_min_reues_distance(static_cast<unsigned>(-1)), // set min_reuse_distance to inf 
       m_n_locked{0},
       m_rfcache_stats(rfcache_stats),
       m_global_oc_id(global_oc_id) {
@@ -350,7 +351,8 @@ bool RFWithCache::modified_collector_unit_t::allocate(
   unsigned op = 0;
   for (auto src : srcs) {
     auto pending_reuses = (*inst_in_inp_reg)->arch_reg_pending_reuses.src[op]; // get the pending reuses to this source operand
-    auto access_status = m_rfcache.read_access(src, pending_reuses, m_warp_id);
+    int reuse_distance = (*inst_in_inp_reg)->arch_reg_reuse_distances.src[op]; // get reuse distance for this src reg
+    auto access_status = m_rfcache.read_access(src, pending_reuses, reuse_distance, m_warp_id);
     if (access_status ==
         RFWithCache::modified_collector_unit_t::access_t::Miss) {
       // only for missed values we need to wait
@@ -377,9 +379,11 @@ bool RFWithCache::modified_collector_unit_t::allocate(
 RFWithCache::modified_collector_unit_t::access_t
 RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
                                                              int pending_reuses,
+                                                             int reuse_distance,
                                                              unsigned wid) {
-  DDDPRINTF("Read Access Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuses)
-  assert(pending_reuses >= 0);
+  DDDPRINTF("Read Access Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuses << " RD: " << reuse_distance)
+  assert((pending_reuses > 0 && reuse_distance > 0) || (pending_reuses == 0 && reuse_distance == -1));
+
   tag_t tag(wid, regid);
   if (m_cache_table.find(tag) == m_cache_table.end()) {
     DDDPRINTF("Miss in cache table <" << tag.first << ", " << tag.second << ">")
@@ -401,7 +405,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
       assert(!had_replacement);
       m_n_available--;
-      allocate(tag, pending_reuses);
+      allocate(tag, pending_reuses, reuse_distance);
       // m_rpolicy.lock(tag);
     } else {
       // should replace an entry
@@ -414,12 +418,12 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
       replace(replaced_tag);
       m_cache_table.erase(replaced_tag);
       m_cache_table.insert({tag, {}});
-      allocate(tag, pending_reuses);
+      allocate(tag, pending_reuses, reuse_distance);
     }
 
     lock(tag);  // wait for data from banks
 
-    assert(check_size());
+    assert(check());
     dump();
     m_rfcache_stats.inc_read_misses(m_global_oc_id);
     return Miss;
@@ -433,7 +437,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     //assert(--m_cache_table[tag].m_pending_reuses == pending_reuses);
     // we always should trust info from traces
     replace(tag); // it's like replace current info with new info from traces
-    allocate(tag, pending_reuses);
+    allocate(tag, pending_reuses, reuse_distance);
     //if(pending_reuses == 0) turn_live_to_dead(tag);
     if (m_cache_table[tag].is_locked()) {
       // RF read pending
@@ -443,7 +447,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     }
     dump();
     m_rfcache_stats.inc_read_hits(m_global_oc_id);
-    assert(check_size());
+    assert(check());
     return Hit;
   }
 }
@@ -546,11 +550,24 @@ bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::find(
   return m_redundant_write_tracker.find(tag) != m_redundant_write_tracker.end();
 }
 
-bool RFWithCache::modified_collector_unit_t::RFCache::check_size() const {
+bool RFWithCache::modified_collector_unit_t::RFCache::check() const {
   return (m_n_available <= m_size) && (m_n_locked <= m_size) &&
          (m_n_locked + m_n_available <= m_size) &&
-         (m_n_lives + m_n_deads + m_n_available == m_size);
+         (m_n_lives + m_n_deads + m_n_available == m_size) &&
+         comp_min_rd() == m_min_reues_distance;
 }
+
+unsigned RFWithCache::modified_collector_unit_t::RFCache::comp_min_rd() const {
+  unsigned min_rd = static_cast<unsigned>(-1); // initialize with maximum reuse distance
+  for (auto &block : m_cache_table) {
+    auto rd = block.second.m_reuse_distance; // get the reues distance per block
+    if(rd > 0) {
+      // only consider live values
+      if (min_rd > rd) min_rd = rd;
+    }
+  }
+  return min_rd;
+} 
 
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::
     has_pending_writes() const {
@@ -563,7 +580,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::lock(const tag_t &tag) {
   m_cache_table[tag].lock();
   m_rpolicy.lock(tag);
   m_n_locked++;
-  assert(check_size());
+  assert(check());
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::unlock(const tag_t &tag) {
@@ -572,13 +589,13 @@ void RFWithCache::modified_collector_unit_t::RFCache::unlock(const tag_t &tag) {
   m_cache_table[tag].unlock();
   m_rpolicy.unlock(tag);
   m_n_locked--;
-  assert(check_size());
+  assert(check());
   dump();
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::dump() {
   DDDPRINTF("Cache Table S: " << m_size << " A: " << m_n_available
-                              << " L: " << m_n_locked << " Li: " << m_n_lives <<" De: " << m_n_deads)
+                              << " L: " << m_n_locked << " Li: " << m_n_lives <<" De: " << m_n_deads << " RD: " << m_min_reues_distance)
   for (auto b : m_cache_table) {
     auto &block = b.second;
 
@@ -616,7 +633,7 @@ bool RFWithCache::writeback(warp_inst_t &inst) {
             op_t(&inst, reg_num, m_num_banks, m_bank_warp_shift, sub_core_model,
                  m_num_banks_per_sched, inst.get_schd_id()));
         assert(inst.arch_reg_pending_reuses.dst[op] >= 0);
-        m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num, inst.arch_reg_pending_reuses.dst[op]);
+        m_write_reqs.push(inst.get_dst_oc_id(), inst.warp_id(), reg_num, inst.arch_reg_pending_reuses.dst[op], inst.arch_reg_reuse_distances.dst[op]);
         inst.arch_reg.dst[op] = -1;
         inst.arch_reg_pending_reuses.dst[op] = -1;
         inst.arch_reg_reuse_distances.dst[op] = -2;
@@ -657,7 +674,7 @@ void RFWithCache::process_writes() {
         continue;
       }
 
-      oc->process_write(req.regid(), req.pending_reuses());
+      oc->process_write(req.regid(), req.pending_reuses(), req.reuse_distance());
     }
     DDDPRINTF("RF Writes: OCID: " << oc_id << " tot_reqs: " << oc_wreqs << " ")
   }
@@ -665,12 +682,13 @@ void RFWithCache::process_writes() {
 }
 
 void RFWithCache::WriteReqs::push(unsigned oc_id, unsigned wid,
-                                  unsigned regid, int pending_reuse) {
+                                  unsigned regid, int pending_reuse, int reuse_distance) {
   
-  m_write_reqs[oc_id].push_back(WriteReq(wid, regid, pending_reuse));
+  assert(reuse_distance > -2);
+  m_write_reqs[oc_id].push_back(WriteReq(wid, regid, pending_reuse, reuse_distance));
   m_size++;
   DDDPRINTF("Push WRQ: <" << oc_id << ", " << wid << ", " << regid << ">"
-                          << " S: " << m_size << " PR: " << pending_reuse)
+                          << " S: " << m_size << " PR: " << pending_reuse << " RD: " << reuse_distance)
 }
 
 bool RFWithCache::WriteReqs::has_req(unsigned oc_id) const {
@@ -692,7 +710,7 @@ RFWithCache::WriteReqs::WriteReq RFWithCache::WriteReqs::pop(unsigned oc_id) {
   }
   m_size--;
   DDPRINTF("Pop WRQ: <" << oc_id << ", " << result.m_wid << ", "
-                        << result.m_regid << "> S: " << m_size << " PR: " << result.m_pendign_reuse)
+                        << result.m_regid << "> S: " << m_size << " PR: " << result.m_pendign_reuse << " RD: " << result.m_reuse_distance)
   return result;
 }
 
@@ -713,23 +731,26 @@ void RFWithCache::modified_collector_unit_t::RFCache::flush() {
   m_n_available = m_size;
   m_n_lives = 0;
   m_n_deads = 0;
+  m_min_reues_distance = static_cast<unsigned>(-1); // reset min reuse distance to inf eg. there is no reuse to this cache
   m_rpolicy.reset();
   m_cache_table.clear();
   m_fill_buffer.flush();
 }
 
-void RFWithCache::modified_collector_unit_t::process_write(unsigned regid, int pending_reuse) {
+void RFWithCache::modified_collector_unit_t::process_write(unsigned regid, int pending_reuse, int reuse_distance) {
   assert(pending_reuse >= 0);
-  m_rfcache.write_access(m_warp_id, regid, pending_reuse);
+  m_rfcache.write_access(m_warp_id, regid, pending_reuse, reuse_distance);
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::write_access(
-    unsigned wid, unsigned regid, int pending_reuse) {
+    unsigned wid, unsigned regid, int pending_reuse, int reuse_distance) {
   DDDPRINTF("Write Access " << "Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuse)
   tag_t tag(wid, regid);
   RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::Entry entry;
   entry.m_tag = tag;
   entry.m_pending_reuse = pending_reuse;
+  entry.m_reuse_distance = reuse_distance;
+  
   if (m_cache_table.find(tag) != m_cache_table.end()) {
     // register found in the table
     auto &block = m_cache_table[tag];
@@ -743,8 +764,8 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
     // rewriting a register
     assert(block.m_pending_reuses == 0 || block.m_pending_reuses == pending_reuse); // wheather rewrite in two different insts or multiple writes because of one memory inst
     replace(tag); // value is dead and it could be replaced with a live or dead value depending on the pending_reuse value
-    allocate(tag, pending_reuse);
-    assert(check_size());
+    allocate(tag, pending_reuse, reuse_distance);
+    assert(check());
   } else {
     // register not found in the table
     // if fill buffer has entries try to put the value in the fill buffer
@@ -772,8 +793,8 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
         tag_t replaced_tag;
         auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
         assert(!had_replacement);
-        allocate(tag, pending_reuse);
-        assert(check_size());
+        allocate(tag, pending_reuse, reuse_distance);
+        assert(check());
       } else {
         // all entries are locked -> add to fill buffer
         // there is unlocked entries in the table -> replace one
@@ -794,14 +815,14 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
           m_cache_table.erase(
               replaced_tag);  // remove replaced entry from table
           m_cache_table.insert({tag, {}});
-          allocate(tag, pending_reuse);
-          assert(check_size());
+          allocate(tag, pending_reuse, reuse_distance);
+          assert(check());
         }
       }
     }
   }
   dump();
-  assert(check_size());
+  assert(check());
 }
 
 void RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::dump() {
@@ -856,9 +877,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
         auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
         assert(!had_replacement);
         m_cache_table.insert({entry.m_tag, {}});
-        allocate(entry.m_tag, entry.m_pending_reuse);
+        allocate(entry.m_tag, entry.m_pending_reuse, entry.m_reuse_distance);
         m_n_available--;
-        assert(check_size());
+        assert(check());
       } else {
         // no available entry
         if (m_n_locked == m_size) {
@@ -874,8 +895,8 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
           replace(replaced_tag);
           m_cache_table.erase(replaced_tag);
           m_cache_table.insert({entry.m_tag, {}});
-          allocate(entry.m_tag, entry.m_pending_reuse);
-          assert(check_size());
+          allocate(entry.m_tag, entry.m_pending_reuse, entry.m_reuse_distance);
+          assert(check());
         }
       }
     } else {
@@ -884,7 +905,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
   } else {
     // there is no pending write in the fill buffer
   }
-  assert(check_size());
+  assert(check());
   m_rfcache_stats.reg_fill_buffer_size(m_fill_buffer.size());
 }
 
