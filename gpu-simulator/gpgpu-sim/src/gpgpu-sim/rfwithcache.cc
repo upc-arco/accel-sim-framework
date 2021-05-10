@@ -389,7 +389,7 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
                                                              unsigned wid) {
   DDDPRINTF("Read Access Wid: " << wid << " Regid: " << regid << " PR: "
                                 << pending_reuses << " RD: " << reuse_distance)
-  assert((pending_reuses > 0 && reuse_distance > 0) ||
+  assert((pending_reuses > 0 && reuse_distance >= 0) ||
          (pending_reuses == 0 && reuse_distance == -1));
 
   tag_t tag(wid, regid);
@@ -563,26 +563,35 @@ bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::find(
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::check() const {
+  auto computed_min_reuse_distance = comp_min_rd();
   return (m_n_available <= m_size) && (m_n_locked <= m_size) &&
          (m_n_locked + m_n_available <= m_size) &&
          (m_n_lives + m_n_deads + m_n_available == m_size) &&
-         comp_min_rd() == m_min_reues_distance;
+         (computed_min_reuse_distance == m_min_reues_distance);
 }
 
-unsigned RFWithCache::modified_collector_unit_t::RFCache::comp_min_rd() const {
+unsigned RFWithCache::modified_collector_unit_t::RFCache::comp_min_rd(
+    const tag_t &tag) const {
   unsigned min_rd =
-      static_cast<unsigned>(-1);  // initialize with maximum reuse distance
+      static_cast<unsigned>(-1);     // initialize with maximum reuse distance
+  bool exclude_replacement = false;  // replacement should not be counted
+  if (tag.first != -1) exclude_replacement = true;
   for (auto &block : m_cache_table) {
+    if (exclude_replacement &&
+        (block.first.first == tag.first && block.first.second == tag.second))
+      continue;
     auto rd =
         block.second.m_reuse_distance;  // get the reues distance per block
-    if (rd > 0) {
+    auto pr = block.second.m_pending_reuses;
+    assert((pr == 0 && rd == -1) || (pr > 0 && rd >= 0) ||
+           (pr == -1 && rd == -2));
+    if (rd >= 0) {
       // only consider live values
       if (min_rd > rd) min_rd = rd;
     }
   }
   return min_rd;
 }
-
 bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::
     has_pending_writes() const {
   return m_buffer.size() > 0;
@@ -774,10 +783,10 @@ void RFWithCache::modified_collector_unit_t::process_write(unsigned regid,
 void RFWithCache::modified_collector_unit_t::RFCache::write_access(
     unsigned wid, unsigned regid, int pending_reuse, int reuse_distance) {
   DDDPRINTF("Write Access "
-            << "Wid: " << wid << " Regid: " << regid
-            << " PR: " << pending_reuse
+            << "Wid: " << wid << " Regid: " << regid << " PR: " << pending_reuse
             << " RD: " << reuse_distance)
-  assert((pending_reuse == 0 && reuse_distance == -1) || (pending_reuse > 0 && reuse_distance >= 0));
+  assert((pending_reuse == 0 && reuse_distance == -1) ||
+         (pending_reuse > 0 && reuse_distance >= 0));
   tag_t tag(wid, regid);
   RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::Entry entry;
   entry.m_tag = tag;

@@ -9,4 +9,5 @@ class RFCacheConfig {
 
  private:
   std::size_t m_size;
+  std::size_t m_rd_thrld; // threshold in reuse distance for OC allocation
 };

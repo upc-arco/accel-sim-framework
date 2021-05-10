@@ -126,7 +126,7 @@ class RFWithCache : public opndcoll_rfu_t {
           if (m_cache_table[tag].m_reuse_distance == m_min_reues_distance) {
             // in case we replace min reuse distance element we should recompute
             // min reuse distance
-            m_min_reues_distance = comp_min_rd();
+            m_min_reues_distance = comp_min_rd(tag);
             assert(m_n_lives == 0 ||
                    (m_n_lives > 0 &&
                     m_min_reues_distance != static_cast<unsigned>(-1)));
@@ -145,7 +145,7 @@ class RFWithCache : public opndcoll_rfu_t {
       }
       void allocate(const tag_t &tag, int pending_reuses, int reuse_distance) {
         assert(
-            (pending_reuses > 0 && reuse_distance > 0) ||
+            (pending_reuses > 0 && reuse_distance >= 0) ||
             (pending_reuses == 0 &&
              reuse_distance == -1));  // new allocation cannot have negative
                                       // pending reuse reuse distance = -1 when
@@ -198,7 +198,7 @@ class RFWithCache : public opndcoll_rfu_t {
       std::size_t m_n_deads;
       unsigned m_min_reues_distance;
       bool check() const;
-      unsigned comp_min_rd() const;
+      unsigned comp_min_rd(const tag_t &tag = tag_t(-1,-1)) const;
       struct pair_hash {
         template <class T1, class T2>
         std::size_t operator()(const std::pair<T1, T2> &p) const {
