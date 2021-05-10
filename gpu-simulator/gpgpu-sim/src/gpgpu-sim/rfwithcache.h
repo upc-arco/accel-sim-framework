@@ -25,8 +25,7 @@ class RFWithCache : public opndcoll_rfu_t {
  private:
   void signal_schedulers(unsigned last_wid, unsigned new_wid);
   void sort_next_input_port(unsigned port_num, const input_port_t &inp);
-  bool priority_func(const warp_inst_t &lhs,
-                     const warp_inst_t &rhs,
+  bool priority_func(const warp_inst_t &lhs, const warp_inst_t &rhs,
                      std::list<unsigned> warps_in_ocs) const;
   std::list<std::pair<warp_inst_t **, register_set *>>
       m_prioritized_input_port;  // keep next cycle prioritized list of
@@ -39,27 +38,33 @@ class RFWithCache : public opndcoll_rfu_t {
   RFCacheStats &m_rfcache_stats;
   const RFCacheConfig &m_rfcache_config;
 
-  
   class WriteReqs {
-    public:
+   public:
     class WriteReq {
-      public:
-        WriteReq(unsigned wid, unsigned regid, int pending_reuse, int reuse_distance) : m_wid{wid}, m_regid{regid}, m_pending_reuse{pending_reuse}, m_reuse_distance{reuse_distance} {
-          assert(pending_reuse >= 0);
-          assert(reuse_distance > -2);
-        }
-        unsigned wid() const { return m_wid; }
-        unsigned regid() const { return m_regid; }
-        int pending_reuses() const { return m_pending_reuse; }
-        int reuse_distance() const { return m_reuse_distance; }
-      private:
-        unsigned m_wid;
-        unsigned m_regid;
-        int m_pending_reuse;
-        int m_reuse_distance;
+     public:
+      WriteReq(unsigned wid, unsigned regid, int pending_reuse,
+               int reuse_distance)
+          : m_wid{wid},
+            m_regid{regid},
+            m_pending_reuse{pending_reuse},
+            m_reuse_distance{reuse_distance} {
+        assert(pending_reuse >= 0);
+        assert(reuse_distance > -2);
+      }
+      unsigned wid() const { return m_wid; }
+      unsigned regid() const { return m_regid; }
+      int pending_reuses() const { return m_pending_reuse; }
+      int reuse_distance() const { return m_reuse_distance; }
+
+     private:
+      unsigned m_wid;
+      unsigned m_regid;
+      int m_pending_reuse;
+      int m_reuse_distance;
     };
 
-    void push(unsigned oc_id, unsigned wid, unsigned regid, int pending_reuse, int reuse_distance);
+    void push(unsigned oc_id, unsigned wid, unsigned regid, int pending_reuse,
+              int reuse_distance);
     bool has_req(unsigned oc_id) const;
     void flush(unsigned oc_id);
     WriteReq pop(unsigned oc_id);
@@ -102,43 +107,59 @@ class RFWithCache : public opndcoll_rfu_t {
      public:
       RFCache(std::size_t sz, RFCacheStats &rfcache_stats,
               unsigned global_oc_id);
-      access_t read_access(unsigned regid, int pending_reuses, int reuse_distance, unsigned wid);
+      access_t read_access(unsigned regid, int pending_reuses,
+                           int reuse_distance, unsigned wid);
       void flush();
-      void write_access(unsigned wid, unsigned regid, int pending_reuse, int reuse_distance);
+      void write_access(unsigned wid, unsigned regid, int pending_reuse,
+                        int reuse_distance);
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
       void lock(const tag_t &tag);
       void unlock(const tag_t &tag);
       void replace(const tag_t &tag) {
         assert(m_cache_table.find(tag) != m_cache_table.end());
-        if(m_cache_table[tag].m_pending_reuses > 0) {
+        if (m_cache_table[tag].m_pending_reuses > 0) {
           assert(m_n_lives > 0);
+          assert(m_cache_table[tag].m_reuse_distance >= 0); // live value should have a non-negative reuse distance
           m_n_lives--;
 
           // update min reuse distance for live values
           if (m_cache_table[tag].m_reuse_distance == m_min_reues_distance) {
-            // in case we replace min reuse distance element we should recompute min reuse distance
+            // in case we replace min reuse distance element we should recompute
+            // min reuse distance
             m_min_reues_distance = comp_min_rd();
-            assert(m_n_lives == 0 || (m_n_lives > 0 && m_min_reues_distance != static_cast<unsigned>(-1)));
+            assert(m_n_lives == 0 ||
+                   (m_n_lives > 0 &&
+                    m_min_reues_distance != static_cast<unsigned>(-1)));
           }
         } else if (m_cache_table[tag].m_pending_reuses == 0) {
           assert(m_n_deads > 0);
+          assert(m_cache_table[tag].m_reuse_distance == -1); // dead values have reuse distance of -1
           m_n_deads--;
 
           // we don't compute reuse distance for dead vals
         }
-        m_cache_table[tag].m_pending_reuses = -1; // when we use replacement to multiple writes to the same reg pending reuse will be owerwritten by allocate 
-      
+        m_cache_table[tag].m_pending_reuses =
+            -1;  // when we use replacement to multiple writes to the same reg
+                 // pending reuse will be owerwritten by allocate
+        m_cache_table[tag].m_reuse_distance = -2; // unallocated entries have reuse distance equal -2
       }
-      void allocate(const tag_t &tag, int pending_reuses, int reuse_distance) { 
-        assert((pending_reuses > 0 && reuse_distance > 0) || (pending_reuses == 0 && reuse_distance == -1)); // new allocation cannot have negative pending reuse 
-                                                                                                            // reuse distance = -1 when no pending otherwise it is positive     
-        assert(m_cache_table[tag].m_pending_reuses <= 0); // new allocated entry initialized to -1
-        assert(m_cache_table[tag].m_reuse_distance <= -1); // whether it is  a new entry or there is no reuse t this entry
+      void allocate(const tag_t &tag, int pending_reuses, int reuse_distance) {
+        assert(
+            (pending_reuses > 0 && reuse_distance > 0) ||
+            (pending_reuses == 0 &&
+             reuse_distance == -1));  // new allocation cannot have negative
+                                      // pending reuse reuse distance = -1 when
+                                      // no pending otherwise it is positive
+        assert(m_cache_table[tag].m_pending_reuses <=
+               0);  // new allocated entry initialized to -1
+        assert(m_cache_table[tag].m_reuse_distance <=
+               -1);  // whether it is  a new entry or there is no reuse t this
+                     // entry
         m_cache_table[tag].m_pending_reuses = pending_reuses;
-        m_cache_table[tag].m_reuse_distance = reuse_distance; 
-        if(pending_reuses > 0) {
+        m_cache_table[tag].m_reuse_distance = reuse_distance;
+        if (pending_reuses > 0) {
           // it is live
-          m_n_lives++; 
+          m_n_lives++;
         } else {
           // it is dead
           m_n_deads++;
@@ -146,22 +167,22 @@ class RFWithCache : public opndcoll_rfu_t {
         if (reuse_distance > -1) {
           // this is a live value and has a reuse distence
           // we only compute min reuse distance based on live values
-          if ( reuse_distance < m_min_reues_distance) {
+          if (reuse_distance < m_min_reues_distance) {
             // new reuse distance changes the minimum
-            m_min_reues_distance = reuse_distance; // update min reuse distance
-          } 
+            m_min_reues_distance = reuse_distance;  // update min reuse distance
+          }
         }
       }
       void turn_live_to_dead(const tag_t &tag) {
         assert(m_cache_table[tag].m_pending_reuses == 0);
         m_cache_table[tag].m_pending_reuses = 0;
-        m_n_lives--; 
+        m_n_lives--;
         m_n_deads++;
       }
       void turn_dead_to_live(const tag_t &tag, int pending_reuse) {
         assert(m_cache_table[tag].m_pending_reuses == 0);
         m_cache_table[tag].m_pending_reuses = pending_reuse;
-        m_n_deads--; 
+        m_n_deads--;
         m_n_lives++;
       }
       void dump();
@@ -189,14 +210,15 @@ class RFWithCache : public opndcoll_rfu_t {
       ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
       class CacheBlock {
        public:
-        CacheBlock() : m_pending_reuses{-1}, m_reuse_distance{-2}, m_lock{false} {}
+        CacheBlock()
+            : m_pending_reuses{-1}, m_reuse_distance{-2}, m_lock{false} {}
         void lock() { m_lock = true; }
         void unlock() { m_lock = false; }
         bool is_locked() { return m_lock; }
         void dump(const tag_t &tag) {
           std::stringstream ss;
           ss << (m_lock ? 'L' : 'U');
-          ss << " PR: " << m_pending_reuses; 
+          ss << " PR: " << m_pending_reuses;
           ss << " RD: " << m_reuse_distance;
           DDDPRINTF("<" << tag.first << ", " << tag.second
                         << ">: " << ss.str());
@@ -210,7 +232,7 @@ class RFWithCache : public opndcoll_rfu_t {
 
       class FillBuffer {
        public:
-       struct Entry {
+        struct Entry {
           tag_t m_tag;
           int m_pending_reuse;
           int m_reuse_distance;
@@ -230,7 +252,6 @@ class RFWithCache : public opndcoll_rfu_t {
        private:
         std::unordered_map<tag_t, unsigned, pair_hash>
             m_redundant_write_tracker;
-        
 
         std::list<Entry> m_buffer;
       };
