@@ -42,7 +42,8 @@ RFWithCache::OCAllocator::OCAllocator(std::size_t num_ocs,
                                       std::size_t num_warps_per_shader)
     : m_n_ocs{num_ocs},
       m_lru_policy{num_ocs},
-      m_n_warps_per_shader{num_warps_per_shader} {
+      m_n_warps_per_shader{num_warps_per_shader},
+      m_stalls_in_a_row{0} {
   DDPRINTF("OCAllocator Constructed Size:" << num_ocs)
 }
 
@@ -110,7 +111,7 @@ void RFWithCache::allocate_cu(unsigned port_num) {
              // to priritize warps that are currently in the ocs
              // for (auto iter = m_prioritized_input_port.begin(); iter !=
   if (m_prioritized_input_port.size() > 0) {
-    DDPRINTF("OCAllocator Allocate New OC")
+    D9PRINTF("OCAllocator Allocate New OC")
 #ifdef D8BUG
     dump_in_latch(port_num);
 #endif
@@ -125,15 +126,17 @@ void RFWithCache::allocate_cu(unsigned port_num) {
     register_set *next_outp =
         next_ready_inst_outp.second;  // output port for next ready instruction
     assert(next_ready_inst && !(*next_ready_inst)->empty());
-    auto allocated = m_oc_allocator.allocate(**next_ready_inst);
+    auto allocated =
+        m_oc_allocator.allocate_distance_liveness(**next_ready_inst);
     if (allocated.first) {
       auto last_wid = allocated.second.get_warp_id();  // previous wid in the oc
       allocated.second.allocate(next_ready_inst, next_outp);
+      m_oc_allocator.dump();
       auto new_wid = allocated.second.get_warp_id();  // new wid in the cache
       signal_schedulers(last_wid, new_wid);
       m_arbiter->add_read_requests(&allocated.second);
     } else {
-      DDDPRINTF("OCAllocator stalled")  // can only service one input
+      D9PRINTF("OCAllocator stalled")  // can only service one input
     }
   }
 }
@@ -256,7 +259,7 @@ RFWithCache::OCAllocator::allocate(const warp_inst_t &inst) {
     new_element_iter->second.m_availble = false;
     m_n_available--;
     m_lru_policy.lock(wid);
-    dump();
+    //dump();
     return std::pair<bool, modified_collector_unit_t &>(
         true, new_element_iter->second.m_oc);
   } else {
@@ -273,7 +276,131 @@ RFWithCache::OCAllocator::allocate(const warp_inst_t &inst) {
     auto had_replacement = m_lru_policy.refer(wid, replaced_wid);
     assert(!had_replacement);
     m_lru_policy.lock(wid);
-    dump();
+    //dump();
+    return std::pair<bool, modified_collector_unit_t &>(true,
+                                                        iter->second.m_oc);
+  }
+}
+void RFWithCache::OCAllocator::sort_ocs(
+    std::vector<std::unordered_map<unsigned, per_oc_info>::iterator> &ocs) {
+  std::sort(
+      ocs.begin(), ocs.end(),
+      [](decltype(m_info_table.begin()) lhs,
+         decltype(m_info_table.begin()) rhs) -> bool {
+        assert(lhs->second.m_availble &&
+               rhs->second.m_availble);  // both should be available
+        auto lhs_min_rdist = lhs->second.m_oc.min_reuse_dist();
+        auto rhs_min_rdist = rhs->second.m_oc.min_reuse_dist();
+        auto lhs_live_vals = lhs->second.m_oc.n_lives();
+        auto rhs_live_vals = rhs->second.m_oc.n_lives();
+        assert(lhs_min_rdist >= 0 &&
+               rhs_live_vals >= 0);  // we do not allow negative live values
+        if (lhs_min_rdist > rhs_min_rdist) {
+          return true;
+        } else if (lhs_min_rdist == rhs_min_rdist) {
+          return lhs_live_vals < rhs_live_vals;
+        } else {
+          return false;
+        }
+      });
+}
+
+bool RFWithCache::OCAllocator::extract_avail_ocs(
+    std::vector<std::unordered_map<unsigned, per_oc_info>::iterator> &ocs,
+    unsigned thrld) {
+  // extract available ocs and tell if there is one above threshold
+  bool have_oc_above_thr = false;
+  for (auto it = m_info_table.begin(); it != m_info_table.end(); it++) {
+    if (!(it->second.m_availble)) continue;
+    if (it->second.m_oc.min_reuse_dist() > thrld) have_oc_above_thr = true;
+    ocs.push_back(it);
+  }
+  return have_oc_above_thr;
+}
+std::pair<bool, RFWithCache::modified_collector_unit_t &>
+RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
+  assert(!inst.empty());
+  if (m_n_available == 0) {
+    // none of the ocs are free
+    return std::pair<bool, modified_collector_unit_t &>{
+        false, m_info_table.begin()->second.m_oc};
+  }
+
+  const unsigned distance_thrld =
+      3;  // anything below this threshold cannot be replaced
+  const unsigned stalls_in_a_row_threshold =
+      3;  // if more stalls in a row than this we force the replacement
+  bool have_oc_above_thr = false;  // do we have oc above threshold?
+
+  auto wid = inst.warp_id();
+
+  if (m_info_table.find(wid) == m_info_table.end()) {  // warp_id is new
+    // -----------remove unavailable ocs
+    std::vector<decltype(m_info_table.begin())> temp;
+    have_oc_above_thr = extract_avail_ocs(temp, distance_thrld);
+    //--------------------------------------------------------
+    //-------------------sort list of ocs---------------------
+    sort_ocs(temp);
+    //----------------------------------------
+    if (have_oc_above_thr) {
+      // there are some ocs to replace temp[0] is the replacement candidate
+      
+        // replace the first possible candidate
+        if (temp[0]->second.m_oc.can_be_allocated(inst)) {
+          // allocate this one
+          assert(temp[0]->second.m_availble == true);
+          assert(m_n_available > 0);
+          m_n_available--;
+          m_info_table.insert({wid, {temp[0]->second.m_oc,false}});
+          m_info_table.erase(temp[0]);
+          //dump();
+          return std::pair<bool, modified_collector_unit_t &>(
+              true, temp[0]->second.m_oc);
+        } else {
+          // couldn't allocate so it should generate stalls 
+          return std::pair<bool, modified_collector_unit_t &>(
+              false, temp[0]->second.m_oc);
+        }
+      
+    } else {
+      // there is no good candidate for replacement
+      if (m_stalls_in_a_row > stalls_in_a_row_threshold) {
+        // find the less promissing oc and replace it
+        
+          if (temp[0]->second.m_oc.can_be_allocated(inst)) {
+            m_stalls_in_a_row = 0;
+            assert(temp[0]->second.m_availble);
+            assert(m_n_available > 0);
+            m_n_available--;
+            m_info_table.insert({wid, {temp[0]->second.m_oc,false}});
+            m_info_table.erase(temp[0]);
+            //dump();
+            return std::pair<bool, modified_collector_unit_t &>(
+                true, temp[0]->second.m_oc);
+          } else {
+            return std::pair<bool, modified_collector_unit_t &>(
+                false, temp[0]->second.m_oc);
+          }
+        
+      }
+      m_stalls_in_a_row++;
+      return std::pair<bool, modified_collector_unit_t &>(
+          false, m_info_table.begin()->second.m_oc);
+    }
+
+  } else {
+    // warp is already in the OCs
+    auto iter = m_info_table.find(wid);
+
+    if (iter->second.m_availble == false ||
+        !(iter->second.m_oc.can_be_allocated(inst))) {
+      // whether oc is not available or cache cannot accept that
+      return std::pair<bool, modified_collector_unit_t &>(false,
+                                                          iter->second.m_oc);
+    }
+    iter->second.m_availble = false;
+    m_n_available--;
+    //dump();
     return std::pair<bool, modified_collector_unit_t &>(true,
                                                         iter->second.m_oc);
   }
@@ -291,25 +418,26 @@ void RFWithCache::dispatch_ready_cu() {
 }
 
 void RFWithCache::OCAllocator::dispatch(unsigned wid) {
-  DDPRINTF("OCAllocator Dispatch " << wid)
+  D9PRINTF("OCAllocator Dispatch " << wid)
   assert(m_n_available < m_n_ocs);
   m_n_available++;
   auto iter = m_info_table.find(wid);
   assert(iter != m_info_table.end() && iter->second.m_availble == false);
   iter->second.m_availble = true;
-  dump();
-  m_lru_policy.unlock(wid);
+  //dump();
+  //m_lru_policy.unlock(wid);
 }
 
 void RFWithCache::OCAllocator::dump() {
-  DDPRINTF("OCAllocator Dump")
+  D9PRINTF("OCAllocator Av: " << m_n_available << " SIR: " << m_stalls_in_a_row)
   std::stringstream ss;
   ss << "Info Table\n";
   for (auto el : m_info_table) {
     ss << "<" << el.first << ", " << (el.second.m_availble ? 'F' : 'O') << ", "
-       << el.second.m_oc.get_id() << "> ";
+       << el.second.m_oc.get_id() << " MRD: " << el.second.m_oc.min_reuse_dist()
+       << " NL: " << el.second.m_oc.n_lives() << "> ";
   }
-  DDPRINTF(ss.str());
+  D9PRINTF(ss.str());
 }
 
 RFWithCache::modified_collector_unit_t::RFCache::RFCache(
@@ -319,7 +447,7 @@ RFWithCache::modified_collector_unit_t::RFCache::RFCache(
       m_size(sz),
       m_n_lives(0),
       m_n_deads(0),
-      m_min_reues_distance(
+      m_min_reuse_distance(
           static_cast<unsigned>(-1)),  // set min_reuse_distance to inf
       m_n_locked{0},
       m_rfcache_stats(rfcache_stats),
@@ -563,11 +691,12 @@ bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::find(
 }
 
 bool RFWithCache::modified_collector_unit_t::RFCache::check() const {
-  auto computed_min_reuse_distance = comp_min_rd();
+  auto computed_min_reuse_distance =
+      comp_min_rd();  // we compare min_reuse_distance with computed version
   return (m_n_available <= m_size) && (m_n_locked <= m_size) &&
          (m_n_locked + m_n_available <= m_size) &&
          (m_n_lives + m_n_deads + m_n_available == m_size) &&
-         (computed_min_reuse_distance == m_min_reues_distance);
+         (computed_min_reuse_distance == m_min_reuse_distance);
 }
 
 unsigned RFWithCache::modified_collector_unit_t::RFCache::comp_min_rd(
@@ -620,7 +749,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::dump() {
   DDDPRINTF("Cache Table S: " << m_size << " A: " << m_n_available
                               << " L: " << m_n_locked << " Li: " << m_n_lives
                               << " De: " << m_n_deads
-                              << " RD: " << m_min_reues_distance)
+                              << " RD: " << m_min_reuse_distance)
   for (auto b : m_cache_table) {
     auto &block = b.second;
 
@@ -765,7 +894,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::flush() {
   m_n_available = m_size;
   m_n_lives = 0;
   m_n_deads = 0;
-  m_min_reues_distance =
+  m_min_reuse_distance =
       static_cast<unsigned>(-1);  // reset min reuse distance to inf eg. there
                                   // is no reuse to this cache
   m_rpolicy.reset();
@@ -804,9 +933,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
     bool had_replacement = m_rpolicy.refer(tag, replaced_tag);
     assert(!had_replacement);
     // rewriting a register
-    assert(block.m_pending_reuses == 0 ||
-           block.m_pending_reuses ==
-               pending_reuse);  // wheather rewrite in two different insts or
+    //assert(block.m_pending_reuses == 0 ||
+    //       block.m_pending_reuses ==
+    //           pending_reuse);  // wheather rewrite in two different insts or
                                 // multiple writes because of one memory inst
     replace(tag);  // value is dead and it could be replaced with a live or dead
                    // value depending on the pending_reuse value

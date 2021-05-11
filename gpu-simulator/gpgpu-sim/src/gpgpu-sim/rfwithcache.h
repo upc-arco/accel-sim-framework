@@ -99,7 +99,9 @@ class RFWithCache : public opndcoll_rfu_t {
     void collect_operand(unsigned op) override;
     void process_write(unsigned regid, int pending_reuse, int reuse_distance);
     void process_fill_buffer();
-
+    unsigned min_reuse_dist() const { return m_rfcache.min_reuse_dist(); }
+    unsigned n_lives() const { return m_rfcache.n_lives(); }
+    
    private:
     unsigned m_sid;
     std::vector<unsigned> get_src_ops(const warp_inst_t &inst) const;
@@ -120,20 +122,23 @@ class RFWithCache : public opndcoll_rfu_t {
         if (m_cache_table[tag].m_pending_reuses > 0) {
           assert(m_n_lives > 0);
           assert(m_cache_table[tag].m_reuse_distance >= 0); // live value should have a non-negative reuse distance
+          assert(m_min_reuse_distance >= 0); // while there is a live value min distance could not be neg
           m_n_lives--;
 
           // update min reuse distance for live values
-          if (m_cache_table[tag].m_reuse_distance == m_min_reues_distance) {
+          if (m_cache_table[tag].m_reuse_distance == m_min_reuse_distance) {
             // in case we replace min reuse distance element we should recompute
             // min reuse distance
-            m_min_reues_distance = comp_min_rd(tag);
-            assert(m_n_lives == 0 ||
-                   (m_n_lives > 0 &&
-                    m_min_reues_distance != static_cast<unsigned>(-1)));
+            m_min_reuse_distance = comp_min_rd(tag);
           }
+          assert((m_n_lives == 0 && m_min_reuse_distance == -1) ||
+                 (m_n_lives > 0 && m_min_reuse_distance != -1));
         } else if (m_cache_table[tag].m_pending_reuses == 0) {
           assert(m_n_deads > 0);
           assert(m_cache_table[tag].m_reuse_distance == -1); // dead values have reuse distance of -1
+          assert((m_n_lives == 0 && m_min_reuse_distance == -1) ||
+                 (m_n_lives > 0 && m_min_reuse_distance != -1));
+
           m_n_deads--;
 
           // we don't compute reuse distance for dead vals
@@ -150,11 +155,9 @@ class RFWithCache : public opndcoll_rfu_t {
              reuse_distance == -1));  // new allocation cannot have negative
                                       // pending reuse reuse distance = -1 when
                                       // no pending otherwise it is positive
-        assert(m_cache_table[tag].m_pending_reuses <=
-               0);  // new allocated entry initialized to -1
-        assert(m_cache_table[tag].m_reuse_distance <=
-               -1);  // whether it is  a new entry or there is no reuse t this
-                     // entry
+        assert((m_cache_table[tag].m_pending_reuses == 0 && m_cache_table[tag].m_reuse_distance == -1) ||
+              (m_cache_table[tag].m_pending_reuses == -1 && m_cache_table[tag].m_reuse_distance == -2));  // wheather new entry or there is no reuse to that
+        
         m_cache_table[tag].m_pending_reuses = pending_reuses;
         m_cache_table[tag].m_reuse_distance = reuse_distance;
         if (pending_reuses > 0) {
@@ -167,27 +170,16 @@ class RFWithCache : public opndcoll_rfu_t {
         if (reuse_distance > -1) {
           // this is a live value and has a reuse distence
           // we only compute min reuse distance based on live values
-          if (reuse_distance < m_min_reues_distance) {
+          if (reuse_distance < m_min_reuse_distance) {
             // new reuse distance changes the minimum
-            m_min_reues_distance = reuse_distance;  // update min reuse distance
+            m_min_reuse_distance = reuse_distance;  // update min reuse distance
           }
         }
       }
-      void turn_live_to_dead(const tag_t &tag) {
-        assert(m_cache_table[tag].m_pending_reuses == 0);
-        m_cache_table[tag].m_pending_reuses = 0;
-        m_n_lives--;
-        m_n_deads++;
-      }
-      void turn_dead_to_live(const tag_t &tag, int pending_reuse) {
-        assert(m_cache_table[tag].m_pending_reuses == 0);
-        m_cache_table[tag].m_pending_reuses = pending_reuse;
-        m_n_deads--;
-        m_n_lives++;
-      }
       void dump();
       void process_fill_buffer();
-
+      unsigned min_reuse_dist() const { return m_min_reuse_distance; }
+      unsigned n_lives() const { return m_n_lives; }
      private:
       unsigned m_global_oc_id;
       RFCacheStats &m_rfcache_stats;
@@ -196,9 +188,9 @@ class RFWithCache : public opndcoll_rfu_t {
       std::size_t m_n_locked;
       std::size_t m_n_lives;
       std::size_t m_n_deads;
-      unsigned m_min_reues_distance;
+      unsigned m_min_reuse_distance;
       bool check() const;
-      unsigned comp_min_rd(const tag_t &tag = tag_t(-1,-1)) const;
+      unsigned comp_min_rd(const tag_t &tag = tag_t(-1,-1)) const; // in normal cases nothing will be excluded but in replacement we have to not to consider the replaced entry
       struct pair_hash {
         template <class T1, class T2>
         std::size_t operator()(const std::pair<T1, T2> &p) const {
@@ -265,6 +257,8 @@ class RFWithCache : public opndcoll_rfu_t {
     void add_oc(modified_collector_unit_t &);
     std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate(
         const warp_inst_t &inst);
+    std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate_distance_liveness(
+        const warp_inst_t &inst);
     void dispatch(unsigned);
     void dump();
     std::list<unsigned> get_warps_in_ocs() const {
@@ -277,6 +271,7 @@ class RFWithCache : public opndcoll_rfu_t {
     }
 
    private:
+    unsigned m_stalls_in_a_row; // number of stalls in a row we can cause after that we have to replace the less promissing oc 
     size_t m_n_available;
     size_t m_n_ocs;
     size_t m_n_warps_per_shader;
@@ -287,6 +282,8 @@ class RFWithCache : public opndcoll_rfu_t {
       bool m_availble;
     };
     std::unordered_map<unsigned, per_oc_info> m_info_table;
+    bool extract_avail_ocs(std::vector<std::unordered_map<unsigned, per_oc_info>::iterator> &, unsigned thrld);
+    void sort_ocs(std::vector<std::unordered_map<unsigned, per_oc_info>::iterator> &);
     ReplacementPolicy<unsigned> m_lru_policy;
   };
   OCAllocator m_oc_allocator;
