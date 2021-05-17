@@ -327,9 +327,9 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   }
 
   const unsigned distance_thrld =
-      3;  // anything below this threshold cannot be replaced
+      20;  // anything below this threshold cannot be replaced
   const unsigned stalls_in_a_row_threshold =
-      3;  // if more stalls in a row than this we force the replacement
+      20;  // if more stalls in a row than this we force the replacement
   bool have_oc_above_thr = false;  // do we have oc above threshold?
 
   auto wid = inst.warp_id();
@@ -443,7 +443,7 @@ void RFWithCache::OCAllocator::dump() {
 RFWithCache::modified_collector_unit_t::RFCache::RFCache(
     std::size_t sz, RFCacheStats &rfcache_stats, unsigned global_oc_id)
     : m_n_available{sz},
-      m_rpolicy(sz),
+//      m_rpolicy(sz),
       m_size(sz),
       m_n_lives(0),
       m_n_deads(0),
@@ -537,16 +537,16 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
     if (m_n_available > 0) {
       // there is space in the table
       m_cache_table.insert({tag, {}});
-      tag_t replaced_tag;
-      auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
-      assert(!had_replacement);
+//      tag_t replaced_tag;
+//      auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+//      assert(!had_replacement);
       m_n_available--;
       allocate(tag, pending_reuses, reuse_distance);
       // m_rpolicy.lock(tag);
     } else {
       // should replace an entry
       tag_t replaced_tag;
-      bool had_replaced = m_rpolicy.refer(tag, replaced_tag);
+      bool had_replaced = replacement(tag, replaced_tag); // do replacement with rpolicy
       assert(had_replaced);
       DDDPRINTF("Replaced PREG: <" << replaced_tag.first << ", "
                                    << replaced_tag.second << "> ")
@@ -566,9 +566,9 @@ RFWithCache::modified_collector_unit_t::RFCache::read_access(unsigned regid,
   } else {
     // present in cache
     DDDPRINTF("Hit in cache table <" << tag.first << ", " << tag.second << ">")
-    tag_t replaced_tag;
-    auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
-    assert(!had_replacement);
+//    tag_t replaced_tag;
+//    auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+//    assert(!had_replacement);
     // assert(m_cache_table[tag].m_pending_reuses > 0);
     // assert(--m_cache_table[tag].m_pending_reuses == pending_reuses);
     // we always should trust info from traces
@@ -730,7 +730,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::lock(const tag_t &tag) {
   assert(m_cache_table.find(tag) != m_cache_table.end());
   assert(!m_cache_table[tag].is_locked());
   m_cache_table[tag].lock();
-  m_rpolicy.lock(tag);
+//  m_rpolicy.lock(tag);
   m_n_locked++;
   assert(check());
 }
@@ -739,7 +739,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::unlock(const tag_t &tag) {
   assert(m_cache_table.find(tag) != m_cache_table.end());
   assert(m_cache_table[tag].is_locked());
   m_cache_table[tag].unlock();
-  m_rpolicy.unlock(tag);
+//  m_rpolicy.unlock(tag);
   m_n_locked--;
   assert(check());
   dump();
@@ -755,7 +755,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::dump() {
 
     block.dump(b.first);
   }
-  m_rpolicy.dump();
+//  m_rpolicy.dump();
   m_fill_buffer.dump();
 }
 
@@ -897,7 +897,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::flush() {
   m_min_reuse_distance =
       static_cast<unsigned>(-1);  // reset min reuse distance to inf eg. there
                                   // is no reuse to this cache
-  m_rpolicy.reset();
+//  m_rpolicy.reset();
   m_cache_table.clear();
   m_fill_buffer.flush();
 }
@@ -929,9 +929,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
     // assert(!block.is_locked());
     // update the value
     // update the replacement policy
-    tag_t replaced_tag;
-    bool had_replacement = m_rpolicy.refer(tag, replaced_tag);
-    assert(!had_replacement);
+  //  tag_t replaced_tag;
+  //  bool had_replacement = m_rpolicy.refer(tag, replaced_tag);
+  //  assert(!had_replacement);
     // rewriting a register
     //assert(block.m_pending_reuses == 0 ||
     //       block.m_pending_reuses ==
@@ -965,9 +965,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
         // add the value in the table, there is no replacement
         m_cache_table.insert({tag, {}});
         m_n_available--;
-        tag_t replaced_tag;
-        auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
-        assert(!had_replacement);
+//        tag_t replaced_tag;
+//        auto had_replacement = m_rpolicy.refer(tag, replaced_tag);
+//        assert(!had_replacement);
         allocate(tag, pending_reuse, reuse_distance);
         assert(check());
       } else {
@@ -982,7 +982,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::write_access(
           // there is replacement available
           // replace one entry
           tag_t replaced_tag;
-          bool had_replacement = m_rpolicy.refer(tag, replaced_tag);
+          bool had_replacement = replacement(tag, replaced_tag); // do replacement
           assert(had_replacement);
           assert((m_cache_table.find(replaced_tag) != m_cache_table.end()) &&
                  !m_cache_table[replaced_tag].is_locked());
@@ -1049,9 +1049,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
       if (m_n_available > 0) {
         // there is available entry in the cache
         // replacement not required
-        tag_t replaced_tag;
-        auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
-        assert(!had_replacement);
+      //  tag_t replaced_tag;
+      //  auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
+      //  assert(!had_replacement);
         m_cache_table.insert({entry.m_tag, {}});
         allocate(entry.m_tag, entry.m_pending_reuse, entry.m_reuse_distance);
         m_n_available--;
@@ -1064,7 +1064,7 @@ void RFWithCache::modified_collector_unit_t::RFCache::process_fill_buffer() {
         } else {
           // replacement should happen
           tag_t replaced_tag;
-          auto had_replacement = m_rpolicy.refer(entry.m_tag, replaced_tag);
+          auto had_replacement = replacement(entry.m_tag, replaced_tag); // do replacement
           assert(had_replacement);
           assert(m_cache_table.find(replaced_tag) != m_cache_table.end());
           assert(!m_cache_table[replaced_tag].is_locked());
@@ -1096,4 +1096,31 @@ bool RFWithCache::modified_collector_unit_t::RFCache::FillBuffer::pop_front(
     m_redundant_write_tracker.erase(front_entry.m_tag);
   }
   return (pending_updates == 0);
+}
+
+bool RFWithCache::modified_collector_unit_t::RFCache::replacement(const tag_t &tag, tag_t &replaced_tag) {
+  if (m_n_locked == m_size) return false; // all entries are locked
+
+  // there should be a replacement   
+  int max_reuse_distance = -1;
+  for (auto &block : m_cache_table) {
+    if(block.second.is_locked()) continue;
+    if(block.second.m_pending_reuses <= 0) {
+      // we have an invalid or dead entry
+      assert(block.second.m_reuse_distance <= -1);
+      replaced_tag.first = block.first.first;
+      replaced_tag.second = block.first.second;
+      return true;
+    }
+    assert(block.second.m_reuse_distance > -1);
+    // for all valid blocks compute max reuse distance
+    if(block.second.m_reuse_distance > max_reuse_distance) {
+      max_reuse_distance = block.second.m_reuse_distance;
+      replaced_tag.first = block.first.first;
+      replaced_tag.second = block.first.second;
+    }
+  }
+  assert(max_reuse_distance > -1);
+  DDDPRINTF("ID: " << m_global_oc_id << " replace <" << tag.first << ", " << tag.second << "> with <" << replaced_tag.first << ", " << replaced_tag.second << ">")
+  return true;
 }

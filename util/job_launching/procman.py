@@ -383,7 +383,7 @@ def main():
                   type=int, default=30)
     parser.add_option("-c", "--cores", dest="cores",
                   help="how many cores to use",
-                  type=int, default=psutil.cpu_count())
+                  type=int, default=psutil.cpu_count()/2)
     parser.add_option("-S", "--start", dest="start",action="store_true",
                   help="Just spawn the manager")
     parser.add_option("-p", "--printState", dest="printState",action="store_true",

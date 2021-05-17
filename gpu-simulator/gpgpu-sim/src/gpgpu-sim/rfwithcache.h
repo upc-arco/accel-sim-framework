@@ -117,6 +117,7 @@ class RFWithCache : public opndcoll_rfu_t {
       bool can_allocate(const std::vector<unsigned> &ops, unsigned wid) const;
       void lock(const tag_t &tag);
       void unlock(const tag_t &tag);
+      bool replacement(const tag_t &tag, tag_t &replaced_tag);
       void replace(const tag_t &tag) {
         assert(m_cache_table.find(tag) != m_cache_table.end());
         if (m_cache_table[tag].m_pending_reuses > 0) {
@@ -199,7 +200,7 @@ class RFWithCache : public opndcoll_rfu_t {
           return h1 ^ h2;
         }
       };
-      ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
+//      ReplacementPolicy<tag_t, pair_hash> m_rpolicy;
       class CacheBlock {
        public:
         CacheBlock()
