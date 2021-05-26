@@ -1,10 +1,17 @@
 #pragma once
 #include <iostream>
 
-#define D9BUG
-#define DDDEBUG
+//#define D9BUG
+//#define DDDEBUG
 
 //#define D8BUG
+#define D10BUG
+#ifdef D10BUG
+#define D10PRINTF(x) std::cout << "RFCache Stall: " << x << std::endl;
+#else
+#define D10PRINTF(x) 
+#endif
+
 #ifdef D9BUG
 #define D9PRINTF(x) std::cout << "RFCache DAllocator: " << x << std::endl;
 #else

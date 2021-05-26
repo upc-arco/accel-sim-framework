@@ -104,6 +104,7 @@ void RFWithCache::signal_schedulers(unsigned last_wid, unsigned new_wid) {
 }
 
 void RFWithCache::allocate_cu(unsigned port_num) {
+  m_rfcache_stats.inc_oc_alloc(); // count total oc allocations
   input_port_t &inp = m_in_ports[port_num];
   sort_next_input_port(
       port_num,
@@ -136,8 +137,15 @@ void RFWithCache::allocate_cu(unsigned port_num) {
       signal_schedulers(last_wid, new_wid);
       m_arbiter->add_read_requests(&allocated.second);
     } else {
+      // there were ready but still stalled
+      m_rfcache_stats.inc_oc_alloc_stalls();
+      m_rfcache_stats.inc_oc_alloc_r_stalls();
       D9PRINTF("OCAllocator stalled")  // can only service one input
     }
+  } else {
+    // there is no ready insts to allocate
+    m_rfcache_stats.inc_oc_alloc_stalls();
+    m_rfcache_stats.inc_oc_alloc_nr_stall();
   }
 }
 
@@ -327,9 +335,9 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   }
 
   const unsigned distance_thrld =
-      3;  // anything below this threshold cannot be replaced
+      10;  // anything below this threshold cannot be replaced
   const unsigned stalls_in_a_row_threshold =
-      3;  // if more stalls in a row than this we force the replacement
+      10;  // if more stalls in a row than this we force the replacement
   bool have_oc_above_thr = false;  // do we have oc above threshold?
 
   auto wid = inst.warp_id();
@@ -761,6 +769,9 @@ void RFWithCache::modified_collector_unit_t::RFCache::dump() {
 
 void RFWithCache::step() {
   DDDPRINTF("Step")
+
+  m_rfcache_stats.inc_steps(); // count total num steps
+  
   dispatch_ready_cu();
   allocate_reads();
   for (unsigned p = 0; p < m_in_ports.size(); p++) allocate_cu(p);
