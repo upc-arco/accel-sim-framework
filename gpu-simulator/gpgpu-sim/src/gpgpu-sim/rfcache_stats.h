@@ -11,20 +11,9 @@ class RFCacheStats {
   void print(unsigned long long gpu_tot_sim_cycle,
              unsigned long long gpu_sim_cycle, unsigned tot_num_ocs) const {
     assert((m_tot_oc_alloc_r_stalls + m_tot_oc_alloc_nr_stalls) == m_tot_oc_alloc_stalls);
+    assert((m_bdt_bst_stalls + m_nw_nv_stalls + m_ow_nv_stalls) == m_tot_oc_alloc_r_stalls);
     double oc_cycles = (gpu_sim_cycle + gpu_tot_sim_cycle) * tot_num_ocs;
     double avg_fill_buffer_size = m_tot_fill_buffer_size / oc_cycles;
-    // aggregate stats
-    // for (auto oc : m_n_read_hits) {
-    //     tot_read_hits += oc.second;
-    // }
-
-    // for (auto oc : m_n_read_misses) {
-    //     tot_read_misses += oc.second;
-    // }
-
-    // for (auto shader : m_n_writes) {
-    //     tot_writes += shader.second;
-    // }
 
     // print stats
     std::cout << "rfcache_read_hits = " << m_tot_read_hits << std::endl;
@@ -37,6 +26,9 @@ class RFCacheStats {
     std::cout << "rfcache_tot_oc_alloc_stalls = " << m_tot_oc_alloc_stalls << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nr_stalls = " << m_tot_oc_alloc_nr_stalls << std::endl;
     std::cout << "rfcache_tot_oc_alloc_r_stalls = " << m_tot_oc_alloc_r_stalls << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls = " << m_ow_nv_stalls << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_nw_nv_stalls = " << m_nw_nv_stalls << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_bdt_bst_stalls = " << m_bdt_bst_stalls << std::endl;
     // clear per kernel stats
     // m_n_writes.clear();
     // m_n_read_misses.clear();
@@ -81,6 +73,22 @@ class RFCacheStats {
   void inc_oc_alloc_r_stalls() {
     m_tot_oc_alloc_r_stalls++;
   }
+
+  void inc_ow_nv_stalls() {
+    // this type of stall happens when we have new instructions to a warp already in ocs but this oc is not free
+    m_ow_nv_stalls++;
+  }
+
+  void inc_nw_nv_stalls() {
+    // this stall type happens because we have instructions to new warps but no oc id free
+    m_nw_nv_stalls++;
+  }
+
+  void inc_bdt_bst_stalls() {
+    // this stall happens because we are bellow both thresholds
+    m_bdt_bst_stalls++;
+  }
+
  private:
   //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
   //   // read hits per oc mutable std::unordered_map<unsigned, unsigned long
@@ -97,4 +105,7 @@ class RFCacheStats {
   unsigned long long m_tot_oc_alloc_stalls = 0;
   unsigned long long m_tot_oc_alloc_nr_stalls = 0; // there is no ready inst in the latch between issue and oc allocation
   unsigned long long m_tot_oc_alloc_r_stalls = 0; // there were ready insts but oc allocation stalled
+  unsigned long long m_ow_nv_stalls = 0; // stalls because of instructions to warps in collector units that are not free
+  unsigned long long m_nw_nv_stalls = 0; // stalls because of instructions to warps that are not in collector units yet there is no free oc for allocation
+  unsigned long long m_bdt_bst_stalls = 0; // stalls because of candidate is below distance threshold and stall threshold has not reached 
 };

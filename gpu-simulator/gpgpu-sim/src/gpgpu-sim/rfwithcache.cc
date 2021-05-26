@@ -8,7 +8,8 @@ RFWithCache::RFWithCache(const shader_core_config *config,
                          const shader_core_ctx *shader)
     : m_rfcache_config(config->m_rfcache_config),
       m_oc_allocator(config->gpgpu_operand_collector_num_units_gen,
-                     config->max_warps_per_shader),
+                     config->max_warps_per_shader,
+                     rfcache_stats),
       m_rfcache_stats(rfcache_stats),
       m_shdr(shader),
       m_schedulers(nullptr) {}
@@ -39,8 +40,10 @@ void RFWithCache::add_cu_set(unsigned set_id, unsigned num_cu,
 }
 
 RFWithCache::OCAllocator::OCAllocator(std::size_t num_ocs,
-                                      std::size_t num_warps_per_shader)
-    : m_n_ocs{num_ocs},
+                                      std::size_t num_warps_per_shader,
+                                      RFCacheStats &rfcache_stats)
+    : m_rfcache_stats{rfcache_stats},
+      m_n_ocs{num_ocs},
       m_lru_policy{num_ocs},
       m_n_warps_per_shader{num_warps_per_shader},
       m_stalls_in_a_row{0} {
@@ -328,8 +331,17 @@ bool RFWithCache::OCAllocator::extract_avail_ocs(
 std::pair<bool, RFWithCache::modified_collector_unit_t &>
 RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   assert(!inst.empty());
+  auto wid = inst.warp_id();
+  
   if (m_n_available == 0) {
     // none of the ocs are free
+    if (m_info_table.find(wid) != m_info_table.end()) {
+      // instruction to a warp which is already in the ocs
+      m_rfcache_stats.inc_ow_nv_stalls();
+    } else {
+      // instruction to a new warp
+      m_rfcache_stats.inc_nw_nv_stalls();
+    }
     return std::pair<bool, modified_collector_unit_t &>{
         false, m_info_table.begin()->second.m_oc};
   }
@@ -340,7 +352,6 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
       10;  // if more stalls in a row than this we force the replacement
   bool have_oc_above_thr = false;  // do we have oc above threshold?
 
-  auto wid = inst.warp_id();
 
   if (m_info_table.find(wid) == m_info_table.end()) {  // warp_id is new
     // -----------remove unavailable ocs
@@ -354,30 +365,36 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
       // there are some ocs to replace temp[0] is the replacement candidate
       
         // replace the first possible candidate
-        if (temp[0]->second.m_oc.can_be_allocated(inst)) {
+        assert(temp[0]->second.m_oc.can_be_allocated(inst) == temp[0]->second.m_availble);
+        assert(temp[0]->second.m_availble == true);
+        //if (temp[0]->second.m_oc.can_be_allocated(inst)) {
           // allocate this one
-          assert(temp[0]->second.m_availble == true);
+          //assert(temp[0]->second.m_availble == true);
           assert(m_n_available > 0);
           m_n_available--;
           m_info_table.insert({wid, {temp[0]->second.m_oc,false}});
           m_info_table.erase(temp[0]);
+
           //dump();
           return std::pair<bool, modified_collector_unit_t &>(
               true, temp[0]->second.m_oc);
-        } else {
-          // couldn't allocate so it should generate stalls 
-          return std::pair<bool, modified_collector_unit_t &>(
-              false, temp[0]->second.m_oc);
-        }
+        //} else {
+          // couldn't allocate so it should generate stalls
+        //  assert(temp[0]->second.m_availble == false);
+        //  return std::pair<bool, modified_collector_unit_t &>(
+        //      false, temp[0]->second.m_oc);
+        //}
       
     } else {
       // there is no good candidate for replacement
       if (m_stalls_in_a_row > stalls_in_a_row_threshold) {
         // find the less promissing oc and replace it
         
-          if (temp[0]->second.m_oc.can_be_allocated(inst)) {
+          assert(temp[0]->second.m_availble == true);
+          assert(temp[0]->second.m_oc.can_be_allocated(inst));
+          //if (temp[0]->second.m_oc.can_be_allocated(inst)) {
             m_stalls_in_a_row = 0;
-            assert(temp[0]->second.m_availble);
+           // assert(temp[0]->second.m_availble);
             assert(m_n_available > 0);
             m_n_available--;
             m_info_table.insert({wid, {temp[0]->second.m_oc,false}});
@@ -385,13 +402,15 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
             //dump();
             return std::pair<bool, modified_collector_unit_t &>(
                 true, temp[0]->second.m_oc);
-          } else {
-            return std::pair<bool, modified_collector_unit_t &>(
-                false, temp[0]->second.m_oc);
-          }
+          //} else {
+          //  assert(temp[0]->second.m_availble == false);
+          //  return std::pair<bool, modified_collector_unit_t &>(
+          //      false, temp[0]->second.m_oc);
+          //}
         
       }
       m_stalls_in_a_row++;
+      m_rfcache_stats.inc_bdt_bst_stalls();
       return std::pair<bool, modified_collector_unit_t &>(
           false, m_info_table.begin()->second.m_oc);
     }
@@ -399,10 +418,10 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   } else {
     // warp is already in the OCs
     auto iter = m_info_table.find(wid);
-
-    if (iter->second.m_availble == false ||
-        !(iter->second.m_oc.can_be_allocated(inst))) {
+    assert(iter->second.m_availble == iter->second.m_oc.can_be_allocated(inst));
+    if (iter->second.m_availble == false) {
       // whether oc is not available or cache cannot accept that
+      m_rfcache_stats.inc_ow_nv_stalls();
       return std::pair<bool, modified_collector_unit_t &>(false,
                                                           iter->second.m_oc);
     }
@@ -687,7 +706,8 @@ bool RFWithCache::modified_collector_unit_t::RFCache::can_allocate(
 
 bool RFWithCache::modified_collector_unit_t::can_be_allocated(
     const warp_inst_t &inst) const {
-  if (inst.empty() || !m_free || !m_not_ready.none()) return false;
+  assert(!inst.empty());
+  if (!m_free || !m_not_ready.none()) return false;
   auto srcs = get_src_ops(inst);
   auto wid = inst.warp_id();
   return m_rfcache.can_allocate(srcs, wid);

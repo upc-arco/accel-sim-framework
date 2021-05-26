@@ -253,7 +253,7 @@ class RFWithCache : public opndcoll_rfu_t {
   };
   class OCAllocator {
    public:
-    OCAllocator(std::size_t num_ocs, std::size_t num_warps_per_shader);
+    OCAllocator(std::size_t num_ocs, std::size_t num_warps_per_shader, RFCacheStats &rfcache_stats);
     void add_oc(modified_collector_unit_t &);
     std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate(
         const warp_inst_t &inst);
@@ -271,6 +271,7 @@ class RFWithCache : public opndcoll_rfu_t {
     }
 
    private:
+    RFCacheStats &m_rfcache_stats;
     unsigned m_stalls_in_a_row; // number of stalls in a row we can cause after that we have to replace the less promissing oc 
     size_t m_n_available;
     size_t m_n_ocs;
