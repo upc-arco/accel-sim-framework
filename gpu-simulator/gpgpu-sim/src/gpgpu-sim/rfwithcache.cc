@@ -349,7 +349,7 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   const unsigned distance_thrld =
       10;  // anything below this threshold cannot be replaced
   const unsigned stalls_in_a_row_threshold =
-      10;  // if more stalls in a row than this we force the replacement
+      50;  // if more stalls in a row than this we force the replacement
   bool have_oc_above_thr = false;  // do we have oc above threshold?
 
 
