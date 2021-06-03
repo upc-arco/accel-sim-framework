@@ -139,6 +139,24 @@ void RFWithCache::allocate_cu(unsigned port_num) {
       auto new_wid = allocated.second.get_warp_id();  // new wid in the cache
       signal_schedulers(last_wid, new_wid);
       m_arbiter->add_read_requests(&allocated.second);
+      assert(m_pending_insts_in_latch.find(new_wid) != m_pending_insts_in_latch.end());
+      assert(m_pending_insts_in_latch[new_wid] > 0);
+      m_pending_insts_in_latch[new_wid]--;
+      if (m_pending_insts_in_latch[new_wid] == 0) m_pending_insts_in_latch.erase(new_wid);
+      if(new_wid != last_wid) {
+        //replaced a collector unit
+        if (m_pending_insts_in_latch.find(last_wid) != m_pending_insts_in_latch.end()) {
+          // still pending inst left in the latch
+          assert(m_pending_insts_in_latch[last_wid] > 0);
+          m_rfcache_stats.inc_alloc_nw_wp();
+        } else {
+          // no pending in the latch left
+          m_rfcache_stats.inc_alloc_nw_wop();
+        }
+      } else {
+        // allocate for old warp
+        m_rfcache_stats.inc_alloc_ow();
+      }
     } else {
       // there were ready but still stalled
       m_rfcache_stats.inc_oc_alloc_stalls();
@@ -165,6 +183,9 @@ void RFWithCache::sort_next_input_port(unsigned port_num,
       while (warp_inst_t **next_ready_inst = in_reg_set->get_next_ready()) {
         auto ready_outp = std::make_pair(next_ready_inst, out_reg_set);
         temp.push_back(ready_outp);
+        auto wid = (*next_ready_inst)->warp_id();
+        if(m_pending_insts_in_latch.find(wid) != m_pending_insts_in_latch.end()) m_pending_insts_in_latch[wid]++;
+        else m_pending_insts_in_latch[wid] = 1;
       }
       assert(in_reg_set->traversed_all_regs());
       reg_set_num++;
@@ -796,6 +817,7 @@ void RFWithCache::step() {
   allocate_reads();
   for (unsigned p = 0; p < m_in_ports.size(); p++) allocate_cu(p);
   m_prioritized_input_port.clear();
+  m_pending_insts_in_latch.clear();
   cache_cycle();
   process_banks();
 }

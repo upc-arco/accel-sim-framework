@@ -31,6 +31,7 @@ class RFWithCache : public opndcoll_rfu_t {
       m_prioritized_input_port;  // keep next cycle prioritized list of
                                  // instructions in the input port and the
                                  // target output port
+  std::unordered_map<unsigned, unsigned> m_pending_insts_in_latch; // number of pending insts each warp has in the latch
   void dump_in_latch(unsigned port_num) const;
   std::vector<scheduler_unit *> *m_schedulers;
   unsigned m_n_schedulers;

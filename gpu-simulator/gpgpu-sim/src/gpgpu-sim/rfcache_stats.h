@@ -12,6 +12,8 @@ class RFCacheStats {
              unsigned long long gpu_sim_cycle, unsigned tot_num_ocs) const {
     assert((m_tot_oc_alloc_r_stalls + m_tot_oc_alloc_nr_stalls) == m_tot_oc_alloc_stalls);
     assert((m_bdt_bst_stalls + m_nw_nv_stalls + m_ow_nv_stalls) == m_tot_oc_alloc_r_stalls);
+    auto tot_oc_allocated = m_tot_oc_alloc - m_tot_oc_alloc_stalls; // number of times we successfully allocated ocs without stalling
+    assert((m_oc_alloc_ow + m_oc_alloc_nw_wp + m_oc_alloc_nw_wop) == tot_oc_allocated);  
     double oc_cycles = (gpu_sim_cycle + gpu_tot_sim_cycle) * tot_num_ocs;
     double avg_fill_buffer_size = m_tot_fill_buffer_size / oc_cycles;
 
@@ -29,6 +31,9 @@ class RFCacheStats {
     std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls = " << m_ow_nv_stalls << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nw_nv_stalls = " << m_nw_nv_stalls << std::endl;
     std::cout << "rfcache_tot_oc_alloc_bdt_bst_stalls = " << m_bdt_bst_stalls << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow = " << m_oc_alloc_ow << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_nw_wp = " << m_oc_alloc_nw_wp << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_nw_wop = " << m_oc_alloc_nw_wop << std::endl;
     // clear per kernel stats
     // m_n_writes.clear();
     // m_n_read_misses.clear();
@@ -89,6 +94,20 @@ class RFCacheStats {
     m_bdt_bst_stalls++;
   }
 
+  void inc_alloc_ow() {
+    // count number of times we allocate an OC for an old warp
+    m_oc_alloc_ow++;
+  }
+
+  void inc_alloc_nw_wp() {
+    // number of times we allocate new warp with pending instruction left for the old warp
+    m_oc_alloc_nw_wp++;
+  }
+
+  void inc_alloc_nw_wop() {
+    // number of times we allocate new warp without pending instruction left in the latch for old warp
+    m_oc_alloc_nw_wop++;
+  }
  private:
   //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
   //   // read hits per oc mutable std::unordered_map<unsigned, unsigned long
@@ -108,4 +127,7 @@ class RFCacheStats {
   unsigned long long m_ow_nv_stalls = 0; // stalls because of instructions to warps in collector units that are not free
   unsigned long long m_nw_nv_stalls = 0; // stalls because of instructions to warps that are not in collector units yet there is no free oc for allocation
   unsigned long long m_bdt_bst_stalls = 0; // stalls because of candidate is below distance threshold and stall threshold has not reached 
+  unsigned long long m_oc_alloc_ow = 0; // number of times we allocate old warp
+  unsigned long long m_oc_alloc_nw_wp = 0; // number of times we allocate for new warp but the old warp has pending instructions in the latch
+  unsigned long long m_oc_alloc_nw_wop = 0; // number of times we allocate for new warp but the old warp has no pending inst in the latch
 };
