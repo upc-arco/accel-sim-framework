@@ -356,9 +356,16 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
   
   if (m_n_available == 0) {
     // none of the ocs are free
-    if (m_info_table.find(wid) != m_info_table.end()) {
+    auto iter = m_info_table.find(wid);
+    if (iter != m_info_table.end()) {
       // instruction to a warp which is already in the ocs
       m_rfcache_stats.inc_ow_nv_stalls();
+      if(iter->second.m_oc.waiting_for_opernads()) {
+        // waiting for operand from MRF
+        m_rfcache_stats.inc_ow_nv_stalls_waiting_for_ops();
+      } else {
+        // waiting to be dispatched
+      }
     } else {
       // instruction to a new warp
       m_rfcache_stats.inc_nw_nv_stalls();
@@ -443,6 +450,12 @@ RFWithCache::OCAllocator::allocate_distance_liveness(const warp_inst_t &inst) {
     if (iter->second.m_availble == false) {
       // whether oc is not available or cache cannot accept that
       m_rfcache_stats.inc_ow_nv_stalls();
+      if(iter->second.m_oc.waiting_for_opernads()) {
+        // waiting for operand from MRF
+        m_rfcache_stats.inc_ow_nv_stalls_waiting_for_ops();
+      } else {
+        // waiting to be dispatched
+      }
       return std::pair<bool, modified_collector_unit_t &>(false,
                                                           iter->second.m_oc);
     }

@@ -16,6 +16,8 @@ class RFCacheStats {
     assert((m_oc_alloc_ow + m_oc_alloc_nw_wp + m_oc_alloc_nw_wop) == tot_oc_allocated);  
     double oc_cycles = (gpu_sim_cycle + gpu_tot_sim_cycle) * tot_num_ocs;
     double avg_fill_buffer_size = m_tot_fill_buffer_size / oc_cycles;
+    
+    auto ow_stalls_waiting_for_dispatch = m_ow_nv_stalls - m_ow_nv_stalls_waiting_for_ops; // number of stalls in ow allocation because it is waiting for dispatch
 
     // print stats
     std::cout << "rfcache_read_hits = " << m_tot_read_hits << std::endl;
@@ -34,6 +36,8 @@ class RFCacheStats {
     std::cout << "rfcache_tot_oc_alloc_ow = " << m_oc_alloc_ow << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nw_wp = " << m_oc_alloc_nw_wp << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nw_wop = " << m_oc_alloc_nw_wop << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_ops" << m_ow_nv_stalls_waiting_for_ops << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_dispatch" << ow_stalls_waiting_for_dispatch << std::endl;
     // clear per kernel stats
     // m_n_writes.clear();
     // m_n_read_misses.clear();
@@ -108,6 +112,10 @@ class RFCacheStats {
     // number of times we allocate new warp without pending instruction left in the latch for old warp
     m_oc_alloc_nw_wop++;
   }
+  void inc_ow_nv_stalls_waiting_for_ops() {
+    // count number of ow stalls because waiting for ops from MRF
+    m_ow_nv_stalls_waiting_for_ops++;
+  }
  private:
   //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
   //   // read hits per oc mutable std::unordered_map<unsigned, unsigned long
@@ -130,4 +138,5 @@ class RFCacheStats {
   unsigned long long m_oc_alloc_ow = 0; // number of times we allocate old warp
   unsigned long long m_oc_alloc_nw_wp = 0; // number of times we allocate for new warp but the old warp has pending instructions in the latch
   unsigned long long m_oc_alloc_nw_wop = 0; // number of times we allocate for new warp but the old warp has no pending inst in the latch
+  unsigned long long m_ow_nv_stalls_waiting_for_ops = 0; // old warp stall because waitng for operands 
 };

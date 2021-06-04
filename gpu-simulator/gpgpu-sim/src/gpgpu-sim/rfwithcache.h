@@ -98,6 +98,7 @@ class RFWithCache : public opndcoll_rfu_t {
       Miss,
     };
     void collect_operand(unsigned op) override;
+    bool waiting_for_opernads() { return m_not_ready.any(); }
     void process_write(unsigned regid, int pending_reuse, int reuse_distance);
     void process_fill_buffer();
     unsigned min_reuse_dist() const { return m_rfcache.min_reuse_dist(); }
