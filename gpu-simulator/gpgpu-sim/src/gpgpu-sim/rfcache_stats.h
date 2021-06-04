@@ -36,8 +36,8 @@ class RFCacheStats {
     std::cout << "rfcache_tot_oc_alloc_ow = " << m_oc_alloc_ow << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nw_wp = " << m_oc_alloc_nw_wp << std::endl;
     std::cout << "rfcache_tot_oc_alloc_nw_wop = " << m_oc_alloc_nw_wop << std::endl;
-    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_ops" << m_ow_nv_stalls_waiting_for_ops << std::endl;
-    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_dispatch" << ow_stalls_waiting_for_dispatch << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_ops = " << m_ow_nv_stalls_waiting_for_ops << std::endl;
+    std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_dispatch = " << ow_stalls_waiting_for_dispatch << std::endl;
     // clear per kernel stats
     // m_n_writes.clear();
     // m_n_read_misses.clear();
