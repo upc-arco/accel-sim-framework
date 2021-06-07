@@ -9,7 +9,7 @@ using tag_t = std::pair<unsigned, unsigned>;  // <wid, regid>
 class RFWithCache : public opndcoll_rfu_t {
  public:
   RFWithCache(const shader_core_config *config, RFCacheStats &rfcache_stats,
-              const shader_core_ctx *shader);
+              shader_core_ctx *shader, std::vector<shd_warp_t *> *warp, Scoreboard **scoreboard);
   void add_cu_set(unsigned cu_set, unsigned num_cu, unsigned num_dispatch);
   void init(unsigned num_banks, unsigned num_scheds,
             std::vector<scheduler_unit *> *schedulers,
@@ -23,6 +23,8 @@ class RFWithCache : public opndcoll_rfu_t {
   void process_fill_buffer();
 
  private:
+  std::vector<shd_warp_t *> *m_warp;
+  Scoreboard *m_scoreboard;
   void signal_schedulers(unsigned last_wid, unsigned new_wid);
   void sort_next_input_port(unsigned port_num, const input_port_t &inp);
   bool priority_func(const warp_inst_t &lhs, const warp_inst_t &rhs,
@@ -35,7 +37,7 @@ class RFWithCache : public opndcoll_rfu_t {
   void dump_in_latch(unsigned port_num) const;
   std::vector<scheduler_unit *> *m_schedulers;
   unsigned m_n_schedulers;
-  const shader_core_ctx *m_shdr;
+  shader_core_ctx *m_shdr;
   RFCacheStats &m_rfcache_stats;
   const RFCacheConfig &m_rfcache_config;
 
@@ -256,13 +258,16 @@ class RFWithCache : public opndcoll_rfu_t {
   };
   class OCAllocator {
    public:
-    OCAllocator(std::size_t num_ocs, std::size_t num_warps_per_shader, RFCacheStats &rfcache_stats);
+    OCAllocator(std::size_t num_ocs, std::size_t num_warps_per_shader, RFCacheStats &rfcache_stats, std::vector<shd_warp_t *> *warp, shader_core_ctx *shader, Scoreboard **scoreboard);
     void add_oc(modified_collector_unit_t &);
     std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate(
         const warp_inst_t &inst);
     std::pair<bool, RFWithCache::modified_collector_unit_t &> allocate_distance_liveness(
         const warp_inst_t &inst);
     void dispatch(unsigned);
+
+    shd_warp_t &warp(int i) { return *((*m_warp)[i]); }
+    bool warp_done_exit_or_null(int i) const { return ((*m_warp)[i] == NULL) || (*m_warp)[i]->done_exit(); }
     void dump();
     std::list<unsigned> get_warps_in_ocs() const {
       std::list<unsigned> result;
@@ -274,6 +279,23 @@ class RFWithCache : public opndcoll_rfu_t {
     }
 
    private:
+    enum NewWarpStallAllocType {
+      NW_ADT, // new warp above distance threshold - allocated
+      NW_BDT_AST, // new warp below distance threshold but above stall threshold - allocated 
+      NW_BDT_BST // new warp below distance and stall threshold - stalled 
+    };
+    enum BeforSchedulingStatus {
+      DoneExitorNull,
+      NoValidInst,
+      ValidonBarrier,
+      ValidonScoreboard,
+      CanProgress
+    };
+    void analyze_before_scheduling_status(unsigned owid, NewWarpStallAllocType allocStallType); // analyze I-Buffer, scoreboard and SIMT status to understand befor scheduling status
+    void update_before_scheduling_status(NewWarpStallAllocType allocStallType, BeforSchedulingStatus bfSchStatus);
+    std::vector<shd_warp_t *> *m_warp;
+    Scoreboard **m_scoreboard;
+    shader_core_ctx *m_shader;
     RFCacheStats &m_rfcache_stats;
     unsigned m_stalls_in_a_row; // number of stalls in a row we can cause after that we have to replace the less promissing oc 
     size_t m_n_available;

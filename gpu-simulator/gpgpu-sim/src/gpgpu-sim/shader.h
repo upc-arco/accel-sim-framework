@@ -2307,8 +2307,10 @@ class shader_core_ctx : public core_t {
 
   virtual const warp_inst_t *get_next_inst(unsigned warp_id,
                                            address_type pc) = 0;
+ public:                                         
   virtual void get_pdom_stack_top_info(unsigned warp_id, const warp_inst_t *pI,
                                        unsigned *pc, unsigned *rpc) = 0;
+ protected:
   virtual const active_mask_t &get_active_mask(unsigned warp_id,
                                                const warp_inst_t *pI) = 0;
 

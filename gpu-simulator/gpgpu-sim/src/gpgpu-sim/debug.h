@@ -6,6 +6,14 @@
 
 //#define D8BUG
 //#define D10BUG
+#define D11BUG
+
+#ifdef D11BUG
+#define D11PRINTF(x) std::cout << "RFCache BSCH Analyzer: " << x << std::endl;
+#else
+#define D11PRINTF(x) 
+#endif
+
 #ifdef D10BUG
 #define D10PRINTF(x) std::cout << "RFCache Stall: " << x << std::endl;
 #else
