@@ -1421,7 +1421,14 @@ class register_set {
   }
 
   unsigned get_size() { return regs.size(); }
-
+  bool find_warp_inst(unsigned wid) {
+    for (unsigned i = 0; i < regs.size(); i++) {
+      if (wid == regs[i]->warp_id()) {
+        return true;
+      }
+    }
+    return false;
+  }
  private:
   std::vector<warp_inst_t *> regs;
   const char *m_name;

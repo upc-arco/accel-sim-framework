@@ -1814,6 +1814,7 @@ void SGTOCTOScheduler::cycle() {
                              // waiting for pending register writes
   bool issued_inst = false;  // of these we issued one
 
+  unsigned issue_candidate_wid = -1;
   order_warps();
   for (std::vector<shd_warp_t *>::const_iterator iter =
            m_next_cycle_prioritized_warps.begin();
@@ -1865,6 +1866,9 @@ void SGTOCTOScheduler::cycle() {
                 m_shader->get_active_mask(warp_id, pI);
 
             assert(warp(warp_id).inst_in_pipeline());
+
+            issue_candidate_wid =
+                warp_id;  // capture the wid of issue candidate
 
             if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
@@ -2055,9 +2059,10 @@ void SGTOCTOScheduler::cycle() {
 
       if (issued == 1)
         m_stats->single_issue_nums[m_id]++;
-      else if (issued > 1)
+      else if (issued > 1) {
+        assert(0);
         m_stats->dual_issue_nums[m_id]++;
-      else
+      } else
         abort();  // issued should be > 0
 
       break;
@@ -2067,11 +2072,49 @@ void SGTOCTOScheduler::cycle() {
   // issue stall statistics:
   if (!valid_inst)
     m_rfcache_stats.inc_sched_idle_cycles();  // idle or control hazard
-  else if (!ready_inst)
-    m_rfcache_stats.inc_sched_waiting_for_RAW();  // waiting for RAW hazards (possibly
-                                        // due to memory)
-  else if (!issued_inst)
+  else if (!ready_inst) {
+    m_rfcache_stats.inc_sched_waiting_for_RAW();  // waiting for RAW hazards
+  }                                               // (possibly due to memory)
+  else if (!issued_inst) {
     m_rfcache_stats.inc_sched_pipeline_stalled();  // pipeline stalled
+    assert(issue_candidate_wid != -1);
+    if (std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(),
+                  issue_candidate_wid) != m_warps_in_ocs.end()) {
+      // warp is already in ocs
+      bool has_inst_in_sp = m_sp_out->find_warp_inst(issue_candidate_wid);
+      bool has_inst_in_dp = m_dp_out->find_warp_inst(issue_candidate_wid);
+      bool has_inst_in_sfu = m_sfu_out->find_warp_inst(issue_candidate_wid);
+      bool has_inst_in_int = m_int_out->find_warp_inst(issue_candidate_wid);
+      bool has_inst_in_tensor_core =
+          m_tensor_core_out->find_warp_inst(issue_candidate_wid);
+      bool has_inst_in_spec_cores = false;
+      for (auto spec_core_out : m_spec_cores_out) {
+        if (spec_core_out->find_warp_inst(issue_candidate_wid)) {
+          has_inst_in_spec_cores = true;
+          break;
+        }
+      }
+      bool has_inst_in_mem = m_mem_out->find_warp_inst(issue_candidate_wid);
+
+      bool has_inst_in_latch = has_inst_in_sp || has_inst_in_dp ||
+                               has_inst_in_sfu || has_inst_in_int ||
+                               has_inst_in_tensor_core ||
+                               has_inst_in_spec_cores || has_inst_in_mem;
+
+      if (has_inst_in_latch) {
+        // there is instruction from this warp in latches
+        m_rfcache_stats.inc_sched_pipeline_stalled_ow_in_latch();
+      } else {
+        // there is no instruction from this warp in latch
+        m_rfcache_stats.inc_sched_pipeline_stalled_ow_not_in_latch();
+      }
+    } else {
+      // this is a new warp
+      m_rfcache_stats.inc_sched_pipeline_stalled_nw();
+    }
+  } else {
+    // issued
+  }
 }
 
 void SGTOCTOScheduler::dump() {

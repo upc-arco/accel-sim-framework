@@ -107,12 +107,20 @@ class RFCacheStats {
               << m_nw_bdt_bst_can_progress << std::endl;
 
     //------------------------------scheduler Stats------------------------//
+    assert(m_sched_pipeline_stalled == (m_sched_pipeline_stalled_nw + m_sched_pipeline_stalled_ow_in_latch + m_sched_pipeline_stalled_ow_not_in_latch));
     std::cout << "rfcache_sched_idle_cycles = "
               << m_sched_idle_cycles << std::endl;
     std::cout << "rfcache_sched_waiting_for_RAW = "
               << m_sched_waiting_for_RAW << std::endl;
     std::cout << "rfcache_sched_pipeline_stalled = "
               << m_sched_pipeline_stalled << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled_nw = "
+              << m_sched_pipeline_stalled_nw << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled_ow_not_in_latch = "
+              << m_sched_pipeline_stalled_ow_not_in_latch << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled_ow_in_latch = "
+              << m_sched_pipeline_stalled_ow_in_latch << std::endl;
+    
   }
   void inc_read_hits(unsigned oc_id) {
     DDDDPRINTF("Inc Hit " << oc_id);
@@ -209,6 +217,9 @@ class RFCacheStats {
   void inc_sched_waiting_for_RAW() { m_sched_waiting_for_RAW++; }
   void inc_sched_pipeline_stalled() { m_sched_pipeline_stalled++; }
 
+  void inc_sched_pipeline_stalled_nw() { m_sched_pipeline_stalled_nw++; }
+  void inc_sched_pipeline_stalled_ow_not_in_latch() { m_sched_pipeline_stalled_ow_not_in_latch++; }
+  void inc_sched_pipeline_stalled_ow_in_latch() { m_sched_pipeline_stalled_ow_in_latch++; }
  private:
   //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
   //   // read hits per oc mutable std::unordered_map<unsigned, unsigned long
@@ -303,4 +314,7 @@ class RFCacheStats {
   unsigned long long m_sched_idle_cycles = 0; // scheduler is idle because there is no valid instruction or there is a control hazard(in the trace simulator not occures)
   unsigned long long m_sched_waiting_for_RAW = 0; // there is a RAW dependence
   unsigned long long m_sched_pipeline_stalled = 0; // there is a stall in the pipeline
+  unsigned long long m_sched_pipeline_stalled_nw = 0; // in sched stalled pipeline the issue candidate is not in ocs
+  unsigned long long m_sched_pipeline_stalled_ow_not_in_latch = 0; // in sched stalled pipeline the issue candidate is in ocs but not have any inst in latch
+  unsigned long long m_sched_pipeline_stalled_ow_in_latch = 0; // in sched stalled pipeline the issue candidate is in ocs and has inst in the latch
 };
