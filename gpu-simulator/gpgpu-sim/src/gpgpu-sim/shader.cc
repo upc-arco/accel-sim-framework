@@ -1807,7 +1807,6 @@ void SGTOCTOScheduler::do_on_warp_issued(
 }
 
 void SGTOCTOScheduler::cycle() {
-  std::cout << "here" << std::endl;
   bool valid_inst =
       false;  // there was one warp with a valid instruction to issue (didn't
               // require flush due to control hazard)
