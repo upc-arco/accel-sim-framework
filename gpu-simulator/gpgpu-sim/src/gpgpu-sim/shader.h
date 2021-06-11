@@ -529,10 +529,12 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
                    register_set *int_out, register_set *tensor_core_out,
                    std::vector<register_set *> &spec_cores_out,
                    register_set *mem_out, int id,
-                   std::vector<scheduler_unit *> *schedulers)
+                   std::vector<scheduler_unit *> *schedulers,
+                   RFCacheStats &rfcache_stats)
       : GTOCTOScheduler(stats, shader, scoreboard, simt, warp, sp_out, dp_out,
                         sfu_out, int_out, tensor_core_out, spec_cores_out,
-                        mem_out, id) {
+                        mem_out, id),
+        m_rfcache_stats{rfcache_stats} {
     m_shedulers_in_shader = schedulers;
     m_is_warp_sorter = true;
 
@@ -562,6 +564,7 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
                          const std::vector<shd_warp_t *>::const_iterator
                              &prioritized_iter) override;
   void dump() override;
+  void cycle() override;
   void set_next_cycle_order(std::vector<shd_warp_t *> next_cycle_order) {
     m_next_cycle_prioritized_warps = next_cycle_order;
   }
@@ -587,6 +590,7 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
   }
 
  private:
+  RFCacheStats &m_rfcache_stats;
   bool m_is_warp_sorter;
   std::list<unsigned> m_wids_issued_in_this_cycle;
   std::list<unsigned> m_last_issued_warps;
@@ -2307,9 +2311,11 @@ class shader_core_ctx : public core_t {
 
   virtual const warp_inst_t *get_next_inst(unsigned warp_id,
                                            address_type pc) = 0;
- public:                                         
+
+ public:
   virtual void get_pdom_stack_top_info(unsigned warp_id, const warp_inst_t *pI,
                                        unsigned *pc, unsigned *rpc) = 0;
+
  protected:
   virtual const active_mask_t &get_active_mask(unsigned warp_id,
                                                const warp_inst_t *pI) = 0;

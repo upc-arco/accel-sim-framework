@@ -72,7 +72,7 @@ class RFCacheStats {
     std::cout << "rfcache_tot_oc_alloc_ow_nv_stalls_waiting_for_dispatch = "
               << ow_stalls_waiting_for_dispatch << std::endl;
     
-    
+    //------------------------------------before scheduler stats--------------------------//
     std::cout << "rfcache_nw_adt_first_time_oc_allocation = "
               << m_nw_adt_first_time_oc_allocation << std::endl;
     std::cout << "rfcache_nw_adt_done_exit_or_null = "
@@ -105,6 +105,14 @@ class RFCacheStats {
               << m_nw_bdt_bst_valid_on_scoreboard << std::endl;
     std::cout << "rfcache_nw_bdt_bst_can_progress = "
               << m_nw_bdt_bst_can_progress << std::endl;
+
+    //------------------------------scheduler Stats------------------------//
+    std::cout << "rfcache_sched_idle_cycles = "
+              << m_sched_idle_cycles << std::endl;
+    std::cout << "rfcache_sched_waiting_for_RAW = "
+              << m_sched_waiting_for_RAW << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled = "
+              << m_sched_pipeline_stalled << std::endl;
   }
   void inc_read_hits(unsigned oc_id) {
     DDDDPRINTF("Inc Hit " << oc_id);
@@ -197,6 +205,9 @@ class RFCacheStats {
   void inc_nw_adt_can_progress() { m_nw_adt_can_progress++; }
   void inc_nw_bdt_ast_can_progress() { m_nw_bdt_ast_can_progress++; }
   void inc_nw_bdt_bst_can_progress() { m_nw_bdt_bst_can_progress++; }
+  void inc_sched_idle_cycles() { m_sched_idle_cycles++; }
+  void inc_sched_waiting_for_RAW() { m_sched_waiting_for_RAW++; }
+  void inc_sched_pipeline_stalled() { m_sched_pipeline_stalled++; }
 
  private:
   //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
@@ -289,4 +300,7 @@ class RFCacheStats {
       0;  // the new warp replaces a warp which has valid insts but waiting on
           // barrier has the reuse distance below threshold and stalls below
           // threshold
+  unsigned long long m_sched_idle_cycles = 0; // scheduler is idle because there is no valid instruction or there is a control hazard(in the trace simulator not occures)
+  unsigned long long m_sched_waiting_for_RAW = 0; // there is a RAW dependence
+  unsigned long long m_sched_pipeline_stalled = 0; // there is a stall in the pipeline
 };
