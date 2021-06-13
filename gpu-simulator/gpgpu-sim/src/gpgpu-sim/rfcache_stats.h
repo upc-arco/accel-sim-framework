@@ -107,20 +107,32 @@ class RFCacheStats {
               << m_nw_bdt_bst_can_progress << std::endl;
 
     //------------------------------scheduler Stats------------------------//
-    assert(m_sched_pipeline_stalled == (m_sched_pipeline_stalled_nw + m_sched_pipeline_stalled_ow_in_latch + m_sched_pipeline_stalled_ow_not_in_latch));
+    assert(m_sched_issued == (m_sched_issued_ow + m_sched_issued_nw));
+    assert(m_sched_pipeline_stalled == (m_sched_pipeline_stalled_no_progressable_ow + m_sched_pipeline_stalled_progressable_ow_w_inst_in_latch + m_sched_pipeline_stalled_progressable_ow_wo_inst_in_latch));
+    assert(m_sched_issued_nw == (m_sched_issued_nw_no_progressable_ow + m_sched_issued_nw_progressable_ow_w_inst_in_latch + m_sched_issued_nw_progressable_ow_wo_inst_in_latch));
+    
     std::cout << "rfcache_sched_idle_cycles = "
               << m_sched_idle_cycles << std::endl;
     std::cout << "rfcache_sched_waiting_for_RAW = "
               << m_sched_waiting_for_RAW << std::endl;
     std::cout << "rfcache_sched_pipeline_stalled = "
               << m_sched_pipeline_stalled << std::endl;
-    std::cout << "rfcache_sched_pipeline_stalled_nw = "
-              << m_sched_pipeline_stalled_nw << std::endl;
-    std::cout << "rfcache_sched_pipeline_stalled_ow_not_in_latch = "
-              << m_sched_pipeline_stalled_ow_not_in_latch << std::endl;
-    std::cout << "rfcache_sched_pipeline_stalled_ow_in_latch = "
-              << m_sched_pipeline_stalled_ow_in_latch << std::endl;
-    
+    std::cout << "rfcache_sched_pipeline_stalled_no_progressable_ow = "
+              << m_sched_pipeline_stalled_no_progressable_ow << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled_progressable_ow_wo_inst_in_latch = "
+              << m_sched_pipeline_stalled_progressable_ow_wo_inst_in_latch << std::endl;
+    std::cout << "rfcache_sched_pipeline_stalled_progressable_ow_w_inst_in_latch = "
+              << m_sched_pipeline_stalled_progressable_ow_w_inst_in_latch << std::endl;
+    std::cout << "rfcache_sched_issued = "
+              << m_sched_issued << std::endl;
+    std::cout << "rfcache_sched_issued_ow = "
+              << m_sched_issued_ow << std::endl;
+    std::cout << "rfcache_sched_issued_nw_no_progressable_ow = "
+              << m_sched_issued_nw_no_progressable_ow << std::endl;
+    std::cout << "rfcache_sched_issued_nw_progressable_ow_wo_inst_in_latch = "
+              << m_sched_issued_nw_progressable_ow_wo_inst_in_latch << std::endl;
+    std::cout << "rfcache_sched_issued_nw_progressable_ow_w_inst_in_latch = "
+              << m_sched_issued_nw_progressable_ow_w_inst_in_latch << std::endl;
   }
   void inc_read_hits(unsigned oc_id) {
     DDDDPRINTF("Inc Hit " << oc_id);
@@ -216,16 +228,17 @@ class RFCacheStats {
   void inc_sched_idle_cycles() { m_sched_idle_cycles++; }
   void inc_sched_waiting_for_RAW() { m_sched_waiting_for_RAW++; }
   void inc_sched_pipeline_stalled() { m_sched_pipeline_stalled++; }
-
-  void inc_sched_pipeline_stalled_nw() { m_sched_pipeline_stalled_nw++; }
-  void inc_sched_pipeline_stalled_ow_not_in_latch() { m_sched_pipeline_stalled_ow_not_in_latch++; }
-  void inc_sched_pipeline_stalled_ow_in_latch() { m_sched_pipeline_stalled_ow_in_latch++; }
+  void inc_sched_pipeline_stalled_no_progressable_ow() { m_sched_pipeline_stalled_no_progressable_ow++; }
+  void inc_sched_pipeline_stalled_no_progressable_ow_wo_inst_in_latch() { m_sched_pipeline_stalled_progressable_ow_wo_inst_in_latch++; }
+  void inc_sched_pipeline_stalled_no_progressable_ow_w_ins_in_latch() { m_sched_pipeline_stalled_progressable_ow_w_inst_in_latch++; }
+  
+  void inc_sched_issued() { m_sched_issued++; }
+  void inc_sched_issued_ow() { m_sched_issued_ow++; }
+  void inc_sched_issued_nw() { m_sched_issued_nw++; }
+  void inc_sched_issued_nw_no_progressable_ow() { m_sched_issued_nw_no_progressable_ow++; }
+  void inc_sched_issued_nw_progressable_ow_wo_inst_in_latch() { m_sched_issued_nw_progressable_ow_wo_inst_in_latch++; }
+  void inc_sched_issued_nw_progressable_ow_w_inst_in_latch() { m_sched_issued_nw_progressable_ow_w_inst_in_latch++; }
  private:
-  //   mutable std::unordered_map<unsigned, unsigned long long> m_n_read_hits;
-  //   // read hits per oc mutable std::unordered_map<unsigned, unsigned long
-  //   long> m_n_read_misses; // read misses per oc mutable
-  //   std::unordered_map<unsigned, unsigned long long> m_n_writes; // writes
-  //   per each sm
   unsigned long long m_tot_read_hits = 0;
   unsigned long long m_tot_read_misses = 0;
   unsigned long long m_tot_writes = 0;
@@ -314,7 +327,13 @@ class RFCacheStats {
   unsigned long long m_sched_idle_cycles = 0; // scheduler is idle because there is no valid instruction or there is a control hazard(in the trace simulator not occures)
   unsigned long long m_sched_waiting_for_RAW = 0; // there is a RAW dependence
   unsigned long long m_sched_pipeline_stalled = 0; // there is a stall in the pipeline
-  unsigned long long m_sched_pipeline_stalled_nw = 0; // in sched stalled pipeline the issue candidate is not in ocs
-  unsigned long long m_sched_pipeline_stalled_ow_not_in_latch = 0; // in sched stalled pipeline the issue candidate is in ocs but not have any inst in latch
-  unsigned long long m_sched_pipeline_stalled_ow_in_latch = 0; // in sched stalled pipeline the issue candidate is in ocs and has inst in the latch
+  unsigned long long m_sched_pipeline_stalled_no_progressable_ow = 0; // scheduler pipeline stalled because there was no progressable old warp
+  unsigned long long m_sched_pipeline_stalled_progressable_ow_wo_inst_in_latch = 0; // scheduler pipeline stalled when there was at least one progressable old warp but all had no inst in the latch
+  unsigned long long m_sched_pipeline_stalled_progressable_ow_w_inst_in_latch = 0; // scheduler pipeline stalled when there was at least one progressable old warp with at least one inst in the latch
+  unsigned long long m_sched_issued = 0; // the cycles that issue scheduler issued something
+  unsigned long long m_sched_issued_ow = 0; // scheduler issued an instruction from an old warp
+  unsigned long long m_sched_issued_nw = 0; // scheduler issued an inst from new warp
+  unsigned long long m_sched_issued_nw_no_progressable_ow = 0; // when scheduler issued a new warp there was no progressable old warp
+  unsigned long long m_sched_issued_nw_progressable_ow_wo_inst_in_latch = 0; // when scheduler issued a new warp there was at least one progressable old warp and none of them had inst in the latch
+  unsigned long long m_sched_issued_nw_progressable_ow_w_inst_in_latch = 0; // when scheduler issued new warp there were at least one progressable old warp with instructions in the latch 
 };

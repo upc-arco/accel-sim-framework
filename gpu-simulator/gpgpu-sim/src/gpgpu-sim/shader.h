@@ -143,7 +143,7 @@ class shd_warp_t {
   }
 
   bool functional_done() const;
-  bool waiting();  // not const due to membar
+  bool waiting() const;  // not const due to membar
   bool hardware_done() const;
 
   bool done_exit() const { return m_done_exit; }
@@ -555,10 +555,11 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
     D7PRINTF("Scheduler" << get_schd_id() << " done issue cycle")
     m_last_issued_warps = m_wids_issued_in_this_cycle;
     m_wids_issued_in_this_cycle.clear();
+    m_next_cycle_prioritized_warps.clear();
     m_is_warp_sorter = true;
   }
 
-  void issue(unsigned broadcaster_schid, unsigned wid);
+  void issue(unsigned broadcaster_schid, unsigned wid, unsigned issued_index);
   void order_warps() override;
   void do_on_warp_issued(unsigned warp_id, unsigned num_issued,
                          const std::vector<shd_warp_t *>::const_iterator
@@ -573,14 +574,12 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
     m_is_warp_sorter = false;
   }
 
-  void delete_from_priority_list(unsigned wid) {
-    for (auto iter = m_next_cycle_prioritized_warps.begin();
-         iter != m_next_cycle_prioritized_warps.end(); iter++) {
-      if ((*iter)->get_warp_id() == wid) {
-        m_next_cycle_prioritized_warps.erase(iter);
-        break;
-      }
-    }
+  void delete_from_priority_list(unsigned wid, unsigned issued_index) {
+    auto issued_warp = *(m_next_cycle_prioritized_warps.begin() + issued_index);
+    assert(issued_warp);
+    auto issued_warp_id = issued_warp->get_warp_id(); 
+    assert(wid == issued_warp_id);
+    m_next_cycle_prioritized_warps.erase(m_next_cycle_prioritized_warps.begin() + issued_index);
   }
   void order_func();
   bool priority_func(shd_warp_t *lhs, shd_warp_t *rhs);
@@ -598,6 +597,72 @@ class SGTOCTOScheduler : public GTOCTOScheduler {
       *m_shedulers_in_shader;  // keep a pointer to all schedulers in shader we
                                // use this pointer to signal all about the
                                // issued warp
+  bool is_in_ocs(unsigned wid) const {
+    // determine if the warp is in ocs
+    return std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(), wid) !=
+           m_warps_in_ocs.end();
+  }
+  bool has_inst_in_latch(unsigned wid) const {
+    // find if this warp has inst in latch
+    bool has_inst_in_sp = m_sp_out->find_warp_inst(wid);
+    bool has_inst_in_dp = m_dp_out->find_warp_inst(wid);
+    bool has_inst_in_sfu = m_sfu_out->find_warp_inst(wid);
+    bool has_inst_in_int = m_int_out->find_warp_inst(wid);
+    bool has_inst_in_tensor_core = m_tensor_core_out->find_warp_inst(wid);
+    bool has_inst_in_spec_cores = false;
+    for (auto spec_core_out : m_spec_cores_out) {
+      if (spec_core_out->find_warp_inst(wid)) {
+        has_inst_in_spec_cores = true;
+        break;
+      }
+    }
+    bool has_inst_in_mem = m_mem_out->find_warp_inst(wid);
+
+    return has_inst_in_sp || has_inst_in_dp || has_inst_in_sfu ||
+           has_inst_in_int || has_inst_in_tensor_core ||
+           has_inst_in_spec_cores || has_inst_in_mem;
+  }
+  bool check_no_old_warps_down_the_priority(
+      std::vector<shd_warp_t *>::const_iterator iter) {
+    for (; iter != m_next_cycle_prioritized_warps.end(); iter++) {
+      // continue checking the list
+      if ((*iter) == NULL) continue;
+      auto wid = (*iter)->get_warp_id();
+      if (!is_in_ocs(wid)) continue;      // this is a new warp
+      // we found an old warp that can progress down the priority
+      return false;
+    }
+    return true;
+  }
+  bool check_next_cycle_prioritized_list() {
+    auto first_not_in_ocs =
+        std::find_if(m_next_cycle_prioritized_warps.begin(),
+                     m_next_cycle_prioritized_warps.end(),
+                     [this](const shd_warp_t *el) -> bool {
+                       return el && !this->is_in_ocs(el->get_warp_id());
+                     });
+    if (first_not_in_ocs != m_next_cycle_prioritized_warps.end())
+      first_not_in_ocs++;
+    return check_no_old_warps_down_the_priority(first_not_in_ocs);
+  }
+  bool has_identical_priority_list(std::vector<shd_warp_t *> priority_list) {
+    if (m_next_cycle_prioritized_warps.size() != priority_list.size()) return false;
+    unsigned i = 0;    
+    for (auto warp : priority_list) {
+      if(warp != m_next_cycle_prioritized_warps[i++]) return false;
+    }
+    return true;
+  }
+  bool check_all_priority_lists_are_identical() {
+    auto schedules_in_shader = *m_shedulers_in_shader;
+    
+    for (auto scheduler : schedules_in_shader) {
+      if (get_schd_id() == scheduler->get_schd_id()) continue;
+      if(!has_identical_priority_list(m_next_cycle_prioritized_warps))
+        return false;
+    }
+    return true;
+  }
 };
 class oldest_scheduler : public scheduler_unit {
  public:

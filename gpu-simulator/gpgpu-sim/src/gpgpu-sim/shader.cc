@@ -1037,8 +1037,8 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   warp_inst_t **pipe_reg =
       pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
-
   m_warp[warp_id]->ibuffer_free();
+
   assert(next_inst->valid());
   **pipe_reg = *next_inst;  // static instruction information
   (*pipe_reg)->issue(active_mask, warp_id,
@@ -1690,7 +1690,8 @@ void GTOCTOScheduler::dump() {
   D6PRINTF(ss.str());
 }
 
-void SGTOCTOScheduler::issue(unsigned broadcaster_schid, unsigned wid) {
+void SGTOCTOScheduler::issue(unsigned broadcaster_schid, unsigned wid,
+                             unsigned issued_index) {
   auto n_schedulers_per_shader = m_shedulers_in_shader->size();
   assert(wid < m_shader->get_config()->max_warps_per_shader);
   assert(n_schedulers_per_shader ==
@@ -1704,67 +1705,76 @@ void SGTOCTOScheduler::issue(unsigned broadcaster_schid, unsigned wid) {
 
   if (get_schd_id() == broadcaster_schid) {
     for (unsigned i = 0; i < m_shedulers_in_shader->size(); i++) {
-      if (i == broadcaster_schid) continue;
-      auto neighbor_scheduler =
+      auto scheduler =
           static_cast<SGTOCTOScheduler *>((*m_shedulers_in_shader)[i]);
 
-      neighbor_scheduler->issue(broadcaster_schid, wid);
-      neighbor_scheduler->delete_from_priority_list(wid);
+      if (scheduler->get_schd_id() == broadcaster_schid) {
+        auto issued_warp =
+            *(m_next_cycle_prioritized_warps.begin() + issued_index);
+        assert(issued_warp);
+        assert(issued_warp->get_warp_id() == wid);
+        m_next_cycle_prioritized_warps.erase(
+            m_next_cycle_prioritized_warps.begin() + issued_index);
+        continue;
+      }
+
+      scheduler->issue(broadcaster_schid, wid, issued_index);
+      scheduler->delete_from_priority_list(wid, issued_index);
     }
+    //assert(check_all_priority_lists_are_identical());
   }
 }
 
 bool SGTOCTOScheduler::priority_func(shd_warp_t *lhs, shd_warp_t *rhs) {
-  if (rhs && lhs) {
-    if (lhs->done_exit() || lhs->waiting()) {
-      return false;
-    } else if (rhs->done_exit() || rhs->waiting()) {
-      return true;
-    } else {
-      auto lhs_wid = lhs->get_warp_id();
-      auto lhs_dwid = lhs->get_dynamic_warp_id();
-      auto rhs_wid = rhs->get_warp_id();
-      auto rhs_dwid = rhs->get_dynamic_warp_id();
+  if (!lhs && !rhs) {
+    return true;
+  } else if (!lhs && rhs) {
+    return false;
+  } else if (lhs && !rhs) {
+    return true;
+  } else {
+    assert(lhs && rhs);
 
-      auto lhs_is_in_ocs = is_in_ocs(lhs_wid);
-      auto rhs_is_in_ocs = is_in_ocs(rhs_wid);
+    auto lhs_wid = lhs->get_warp_id();
+    auto lhs_dwid = lhs->get_dynamic_warp_id();
+    auto rhs_wid = rhs->get_warp_id();
+    auto rhs_dwid = rhs->get_dynamic_warp_id();
 
-      auto lhs_is_in_last_issued = is_in_last_issued_warps(lhs_wid);
-      auto rhs_is_in_last_issued = is_in_last_issued_warps(rhs_wid);
+    auto lhs_is_in_ocs = is_in_ocs(lhs_wid);
+    auto rhs_is_in_ocs = is_in_ocs(rhs_wid);
 
-      if (lhs_is_in_ocs && rhs_is_in_ocs) {
-        if (lhs_is_in_last_issued && rhs_is_in_last_issued) {
-          return lhs_dwid < rhs_dwid;
-        } else if (!lhs_is_in_last_issued && rhs_is_in_last_issued) {
-          return false;
-        } else if (lhs_is_in_last_issued && !rhs_is_in_last_issued) {
-          return true;
-        } else {
-          return lhs_dwid < rhs_dwid;
-        }
-      } else if (lhs_is_in_ocs && !rhs_is_in_ocs) {
+    auto lhs_is_in_last_issued = is_in_last_issued_warps(lhs_wid);
+    auto rhs_is_in_last_issued = is_in_last_issued_warps(rhs_wid);
+
+    if (lhs_is_in_ocs && rhs_is_in_ocs) {
+      if (lhs_is_in_last_issued && rhs_is_in_last_issued) {
+        return lhs_dwid < rhs_dwid;
+      } else if (!lhs_is_in_last_issued && rhs_is_in_last_issued) {
+        return false;
+      } else if (lhs_is_in_last_issued && !rhs_is_in_last_issued) {
         return true;
-      } else if (!lhs_is_in_ocs && rhs_is_in_ocs) {
+      } else {
+        return lhs_dwid < rhs_dwid;
+      }
+    } else if (lhs_is_in_ocs && !rhs_is_in_ocs) {
+      return true;
+    } else if (!lhs_is_in_ocs && rhs_is_in_ocs) {
+      return false;
+    } else {
+      assert(!lhs_is_in_ocs && !rhs_is_in_ocs);
+      if (lhs_is_in_last_issued && rhs_is_in_last_issued) {
+        return lhs_dwid < rhs_dwid;
+      } else if (lhs_is_in_last_issued && !rhs_is_in_last_issued) {
+        return true;
+      } else if (!lhs_is_in_last_issued && rhs_is_in_last_issued) {
         return false;
       } else {
-        // !lhs_is_in_ocs && !rhs_is_in_ocs
-        if (lhs_is_in_last_issued && rhs_is_in_last_issued) {
-          return lhs_dwid < rhs_dwid;
-        } else if (lhs_is_in_last_issued && !rhs_is_in_last_issued) {
-          return true;
-        } else if (!lhs_is_in_last_issued && rhs_is_in_last_issued) {
-          return false;
-        } else {
-          // !lhs_is_in_last_issued && !rhs_is_in_last_issued
-          return lhs_dwid < rhs_dwid;
-        }
+        assert(!lhs_is_in_last_issued && !rhs_is_in_last_issued);
+        return lhs_dwid < rhs_dwid;
       }
     }
-  } else {
-    return lhs < rhs;
   }
 }
-
 void SGTOCTOScheduler::order_func() {
   auto temp = m_supervised_warps;
   assert(m_supervised_warps.size() ==
@@ -1777,6 +1787,8 @@ void SGTOCTOScheduler::order_func() {
 
   m_next_cycle_prioritized_warps = temp;
   assert(m_next_cycle_prioritized_warps.size() == m_supervised_warps.size());
+
+  //assert(check_next_cycle_prioritized_list());
 }
 
 void SGTOCTOScheduler::order_warps() {
@@ -1802,8 +1814,27 @@ void SGTOCTOScheduler::order_warps() {
 void SGTOCTOScheduler::do_on_warp_issued(
     unsigned warp_id, unsigned num_issued,
     const std::vector<shd_warp_t *>::const_iterator &prioritized_iter) {
+  auto issued_index = prioritized_iter - m_next_cycle_prioritized_warps.begin();
+  assert(m_next_cycle_prioritized_warps[issued_index]);
+  auto issued_wid = m_next_cycle_prioritized_warps[issued_index]->get_warp_id();
+  assert(warp_id == issued_wid);
+
+  //assert(check_all_priority_lists_are_identical());
+  //assert(check_next_cycle_prioritized_list());
+
   scheduler_unit::do_on_warp_issued(warp_id, num_issued, prioritized_iter);
-  issue(get_schd_id(), warp_id);
+
+  //assert(check_all_priority_lists_are_identical());
+  //assert(check_next_cycle_prioritized_list());
+  issued_index = prioritized_iter - m_next_cycle_prioritized_warps.begin();
+  assert(m_next_cycle_prioritized_warps[issued_index]);
+  issued_wid = m_next_cycle_prioritized_warps[issued_index]->get_warp_id();
+  assert(warp_id == issued_wid);
+
+  issue(get_schd_id(), warp_id, issued_index);
+
+  //assert(check_all_priority_lists_are_identical());
+  //assert(check_next_cycle_prioritized_list());
 }
 
 void SGTOCTOScheduler::cycle() {
@@ -1814,11 +1845,23 @@ void SGTOCTOScheduler::cycle() {
                              // waiting for pending register writes
   bool issued_inst = false;  // of these we issued one
 
+  bool old_warp_has_progressable_inst =
+      false;  // at least there is an old warp with progressable inst
+  bool old_warp_has_progressable_inst_and_insts_in_latch =
+      false;  // there is at least an old warp with progressable inst that has
+              // inst in latch
+
   unsigned issue_candidate_wid = -1;
   order_warps();
-  for (std::vector<shd_warp_t *>::const_iterator iter =
-           m_next_cycle_prioritized_warps.begin();
-       iter != m_next_cycle_prioritized_warps.end(); iter++) {
+
+  //assert(check_all_priority_lists_are_identical());
+  //assert(check_next_cycle_prioritized_list());
+
+  std::vector<shd_warp_t *>::const_iterator iter =
+      m_next_cycle_prioritized_warps.begin();
+  unsigned after_issued_index = -1;
+
+  for (; iter != m_next_cycle_prioritized_warps.end(); iter++) {
     // Don't consider warps that are not yet valid
     if ((*iter) == NULL || (*iter)->done_exit()) {
       continue;
@@ -1838,10 +1881,14 @@ void SGTOCTOScheduler::cycle() {
     while (!warp(warp_id).waiting() && !warp(warp_id).ibuffer_empty() &&
            (checked < max_issue) && (checked <= issued) &&
            (issued < max_issue)) {
+      assert(!(warp(warp_id).waiting()));
+      //assert(check_all_priority_lists_are_identical());
+      //assert(check_next_cycle_prioritized_list());
       const warp_inst_t *pI = warp(warp_id).ibuffer_next_inst();
       // Jin: handle cdp latency;
       if (pI && pI->m_is_cdp && warp(warp_id).m_cdp_latency > 0) {
         assert(warp(warp_id).m_cdp_dummy);
+        assert(0);
         warp(warp_id).m_cdp_latency--;
         break;
       }
@@ -1855,6 +1902,7 @@ void SGTOCTOScheduler::cycle() {
         assert(valid);
         if (pc != pI->pc) {
           // control hazard
+          assert(0);
           warp(warp_id).set_next_pc(pc);
           warp(warp_id).ibuffer_flush();
         } else {
@@ -1869,6 +1917,17 @@ void SGTOCTOScheduler::cycle() {
 
             issue_candidate_wid =
                 warp_id;  // capture the wid of issue candidate
+            if (is_in_ocs(warp_id)) {
+              // this is an old warp that is progressable
+              old_warp_has_progressable_inst = true;
+              if (has_inst_in_latch(warp_id)) {
+                // this old warp is progressable and has inst in latch
+                old_warp_has_progressable_inst_and_insts_in_latch = true;
+              }
+            }
+
+            //assert(check_all_priority_lists_are_identical());
+            //assert(check_next_cycle_prioritized_list());
 
             if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
@@ -1880,6 +1939,8 @@ void SGTOCTOScheduler::cycle() {
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
                                      m_id);
+                //assert(check_all_priority_lists_are_identical());
+                //assert(check_next_cycle_prioritized_list());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1952,15 +2013,23 @@ void SGTOCTOScheduler::cycle() {
                 }
 
                 if (execute_on_SP) {
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
                                        m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
                   previous_issued_inst_exec_type = exec_unit_type_t::SP;
                 } else if (execute_on_INT) {
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
                                        m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1973,6 +2042,8 @@ void SGTOCTOScheduler::cycle() {
                 if (dp_pipe_avail) {
                   m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
                                        m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1988,6 +2059,8 @@ void SGTOCTOScheduler::cycle() {
                 if (sfu_pipe_avail) {
                   m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
                                        m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1999,6 +2072,8 @@ void SGTOCTOScheduler::cycle() {
                 if (tensor_core_pipe_avail) {
                   m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
                                        warp_id, m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2020,6 +2095,8 @@ void SGTOCTOScheduler::cycle() {
                 if (spec_pipe_avail) {
                   m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
                                        m_id);
+                  //assert(check_all_priority_lists_are_identical());
+                  //assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2036,26 +2113,39 @@ void SGTOCTOScheduler::cycle() {
         // this case can happen after a return instruction in diverged warp
         warp(warp_id).set_next_pc(pc);
         warp(warp_id).ibuffer_flush();
+        //assert(check_all_priority_lists_are_identical());
+        //assert(check_next_cycle_prioritized_list());
       }
       if (warp_inst_issued) {
+        assert((issue_candidate_wid != -1) &&
+               (issue_candidate_wid == (*iter)->get_warp_id()));
+        assert(warp_id == issue_candidate_wid);
+        assert(after_issued_index == -1);
+        after_issued_index = iter - m_next_cycle_prioritized_warps.begin();
         do_on_warp_issued(warp_id, issued, iter);
+        //assert(check_next_cycle_prioritized_list());
+        //assert(check_all_priority_lists_are_identical());
+      } else {
       }
       checked++;
     }
     if (issued) {
+      assert(issue_candidate_wid != -1);
+      assert(checked == 1);
       // This might be a bit inefficient, but we need to maintain
       // two ordered list for proper scheduler execution.
       // We could remove the need for this loop by associating a
       // supervised_is index with each entry in the
       // m_next_cycle_prioritized_warps vector. For now, just run through
       // until you find the right warp_id
-      for (std::vector<shd_warp_t *>::const_iterator supervised_iter =
-               m_supervised_warps.begin();
-           supervised_iter != m_supervised_warps.end(); ++supervised_iter) {
-        if (*iter == *supervised_iter) {
-          m_last_supervised_issued = supervised_iter;
-        }
-      }
+      // for (std::vector<shd_warp_t *>::const_iterator supervised_iter =
+      //          m_supervised_warps.begin();
+      //      supervised_iter != m_supervised_warps.end(); ++supervised_iter)
+      //      {
+      //   if (*iter == *supervised_iter) {
+      //     m_last_supervised_issued = supervised_iter;
+      //   }
+      // }
 
       if (issued == 1)
         m_stats->single_issue_nums[m_id]++;
@@ -2078,42 +2168,59 @@ void SGTOCTOScheduler::cycle() {
   else if (!issued_inst) {
     m_rfcache_stats.inc_sched_pipeline_stalled();  // pipeline stalled
     assert(issue_candidate_wid != -1);
-    if (std::find(m_warps_in_ocs.begin(), m_warps_in_ocs.end(),
-                  issue_candidate_wid) != m_warps_in_ocs.end()) {
-      // warp is already in ocs
-      bool has_inst_in_sp = m_sp_out->find_warp_inst(issue_candidate_wid);
-      bool has_inst_in_dp = m_dp_out->find_warp_inst(issue_candidate_wid);
-      bool has_inst_in_sfu = m_sfu_out->find_warp_inst(issue_candidate_wid);
-      bool has_inst_in_int = m_int_out->find_warp_inst(issue_candidate_wid);
-      bool has_inst_in_tensor_core =
-          m_tensor_core_out->find_warp_inst(issue_candidate_wid);
-      bool has_inst_in_spec_cores = false;
-      for (auto spec_core_out : m_spec_cores_out) {
-        if (spec_core_out->find_warp_inst(issue_candidate_wid)) {
-          has_inst_in_spec_cores = true;
-          break;
-        }
-      }
-      bool has_inst_in_mem = m_mem_out->find_warp_inst(issue_candidate_wid);
-
-      bool has_inst_in_latch = has_inst_in_sp || has_inst_in_dp ||
-                               has_inst_in_sfu || has_inst_in_int ||
-                               has_inst_in_tensor_core ||
-                               has_inst_in_spec_cores || has_inst_in_mem;
-
-      if (has_inst_in_latch) {
-        // there is instruction from this warp in latches
-        m_rfcache_stats.inc_sched_pipeline_stalled_ow_in_latch();
-      } else {
-        // there is no instruction from this warp in latch
-        m_rfcache_stats.inc_sched_pipeline_stalled_ow_not_in_latch();
-      }
+    // issued candidate == last wid with valid and ready instruction
+    if (!old_warp_has_progressable_inst) {
+      // there was no progressable old warp
+      m_rfcache_stats.inc_sched_pipeline_stalled_no_progressable_ow();
     } else {
-      // this is a new warp
-      m_rfcache_stats.inc_sched_pipeline_stalled_nw();
+      // there was progressable old warps
+      if (!old_warp_has_progressable_inst_and_insts_in_latch) {
+        // among all progressable old warps none has inst in latch
+        m_rfcache_stats.inc_sched_pipeline_stalled_no_progressable_ow_wo_inst_in_latch();
+      } else {
+        // among all progressable old warps at least one has inst in latch
+        m_rfcache_stats.inc_sched_pipeline_stalled_no_progressable_ow_w_ins_in_latch();
+      }
     }
   } else {
     // issued
+    m_rfcache_stats.inc_sched_issued();
+    assert(issued_inst);
+    assert(issue_candidate_wid != -1);
+    assert(after_issued_index != -1);
+    auto after_issued_iter =
+        (after_issued_index >= m_next_cycle_prioritized_warps.size())
+            ? m_next_cycle_prioritized_warps.end()
+            : (m_next_cycle_prioritized_warps.begin() + after_issued_index);
+    if (is_in_ocs(issue_candidate_wid)) {
+      // issued an inst from an old warp
+      m_rfcache_stats.inc_sched_issued_ow();
+    } else {
+      // issued a new warp
+      m_rfcache_stats.inc_sched_issued_nw();
+
+      if (old_warp_has_progressable_inst) {
+        // issued a new warp but there was an old warp that has not been
+        // issued
+        if (old_warp_has_progressable_inst_and_insts_in_latch) {
+          // among progressable old warps so far at least one had insruction
+          // in the latch
+          m_rfcache_stats.inc_sched_issued_nw_progressable_ow_w_inst_in_latch();
+        } else {
+          // among progressable old warps so far none had instruction in latch
+          m_rfcache_stats.inc_sched_issued_nw_progressable_ow_wo_inst_in_latch();
+        }
+      } else {
+        // there were no old warp that could progress so far
+        m_rfcache_stats.inc_sched_issued_nw_no_progressable_ow();
+      }
+      assert(check_no_old_warps_down_the_priority(
+          after_issued_iter));  // when we reach a new
+                                // warp there should not
+                                // be an old warp that
+                                // can be issued down
+                                // the priority list
+    }
   }
 }
 
@@ -2367,10 +2474,9 @@ unsigned shader_core_ctx::translate_local_memaddr(
     assert(datasize % 4 == 0);  // Must be a multiple of 4B
     num_accesses = datasize / 4;
     assert(num_accesses <= MAX_ACCESSES_PER_INSN_PER_THREAD);  // max 32B
-    assert(
-        localaddr % 4 ==
-        0);  // Address must be 4B aligned - required if accessing 4B per
-             // request, otherwise access will overflow into next thread's space
+    assert(localaddr % 4 == 0);  // Address must be 4B aligned - required if
+                                 // accessing 4B per request, otherwise access
+                                 // will overflow into next thread's space
     for (unsigned i = 0; i < num_accesses; i++) {
       address_type local_word = localaddr / 4 + i;
       address_type linear_address = local_word * max_concurrent_threads * 4 +
@@ -2751,9 +2857,9 @@ bool ldst_unit::constant_cycle(warp_inst_t &inst, mem_stage_stall_type &rc_fail,
     rc_fail = fail;  // keep other fails if this didn't fail.
     fail_type = C_MEM;
     if (rc_fail == BK_CONF or rc_fail == COAL_STALL) {
-      m_stats->gpgpu_n_cmem_portconflict++;  // coal stalls aren't really a bank
-                                             // conflict, but this maintains
-                                             // previous behavior.
+      m_stats->gpgpu_n_cmem_portconflict++;  // coal stalls aren't really a
+                                             // bank conflict, but this
+                                             // maintains previous behavior.
     }
   }
   return inst.accessq_empty();  // done if empty.
@@ -3144,8 +3250,8 @@ ldst_unit::ldst_unit(mem_fetch_interface *icnt,
 void ldst_unit::issue(register_set &reg_set) {
   warp_inst_t *inst = *(reg_set.get_ready());
 
-  // record how many pending register writes/memory accesses there are for this
-  // instruction
+  // record how many pending register writes/memory accesses there are for
+  // this instruction
   assert(inst->empty() == false);
   if (inst->is_load() and inst->space.get_type() != shared_space) {
     unsigned warp_id = inst->warp_id();
@@ -3279,8 +3385,8 @@ void ldst_unit::issue( register_set &reg_set )
    // stat collection
    m_core->mem_instruction_stats(*inst);
 
-   // record how many pending register writes/memory accesses there are for this
-instruction assert(inst->empty() == false); if (inst->is_load() and
+   // record how many pending register writes/memory accesses there are for
+this instruction assert(inst->empty() == false); if (inst->is_load() and
 inst->space.get_type() != shared_space) { unsigned warp_id = inst->warp_id();
       unsigned n_accesses = inst->accessq_count();
       for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++) {
@@ -3326,8 +3432,8 @@ void ldst_unit::cycle() {
         m_response_fifo.pop_front();
         delete mf;
       } else {
-        assert(!mf->get_is_write());  // L1 cache is write evict, allocate line
-                                      // on load miss only
+        assert(!mf->get_is_write());  // L1 cache is write evict, allocate
+                                      // line on load miss only
 
         bool bypassL1D = false;
         if (CACHE_GLOBAL == mf->get_inst().cache_op || (m_L1D == NULL)) {
@@ -3669,8 +3775,8 @@ void gpgpu_sim::shader_print_l1_miss_stat(FILE *fout) const {
   for (unsigned i=0; i<m_shader_config->n_thread_per_shader; i++) {
      temp += m_sc[0]->get_thread_n_l1_mis_ac(i);
      if (i%m_shader_config->warp_size ==
-  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp =
-  0;
+  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp
+  = 0;
      }
   }
   fprintf(fout, "\n");
@@ -3679,8 +3785,8 @@ void gpgpu_sim::shader_print_l1_miss_stat(FILE *fout) const {
   for (unsigned i=0; i<m_shader_config->n_thread_per_shader; i++) {
      temp += (m_sc[0]->get_thread_n_l1_mis_ac(i) -
   m_sc[0]->get_thread_n_l1_mrghit_ac(i) ); if (i%m_shader_config->warp_size ==
-  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp =
-  0;
+  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp
+  = 0;
      }
   }
   fprintf(fout, "\n");
@@ -3689,8 +3795,8 @@ void gpgpu_sim::shader_print_l1_miss_stat(FILE *fout) const {
   for (unsigned i=0; i<m_shader_config->n_thread_per_shader; i++) {
      temp += m_sc[0]->get_thread_n_l1_access_ac(i);
      if (i%m_shader_config->warp_size ==
-  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp =
-  0;
+  (unsigned)(m_shader_config->warp_size-1)) { fprintf(fout, "%d ", temp); temp
+  = 0;
      }
   }
   fprintf(fout, "\n");
@@ -3823,10 +3929,10 @@ void ldst_unit::print(FILE *fout) const {
   }
   fprintf(fout, "LD/ST wb    = ");
   m_next_wb.print(fout);
-  fprintf(
-      fout,
-      "Last LD/ST writeback @ %llu + %llu (gpu_sim_cycle+gpu_tot_sim_cycle)\n",
-      m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
+  fprintf(fout,
+          "Last LD/ST writeback @ %llu + %llu "
+          "(gpu_sim_cycle+gpu_tot_sim_cycle)\n",
+          m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
   fprintf(fout, "Pending register writes:\n");
   std::map<unsigned /*warp_id*/,
            std::map<unsigned /*regnum*/, unsigned /*count*/>>::const_iterator w;
@@ -3921,10 +4027,10 @@ void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
   fprintf(fout, "EX/WB      = ");
   print_stage(EX_WB, fout);
   fprintf(fout, "\n");
-  fprintf(
-      fout,
-      "Last EX/WB writeback @ %llu + %llu (gpu_sim_cycle+gpu_tot_sim_cycle)\n",
-      m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
+  fprintf(fout,
+          "Last EX/WB writeback @ %llu + %llu "
+          "(gpu_sim_cycle+gpu_tot_sim_cycle)\n",
+          m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
 
   if (m_active_threads.count() <= 2 * m_config->warp_size) {
     fprintf(fout, "Active Threads : ");
@@ -3995,7 +4101,8 @@ unsigned int shader_core_config::max_cta(const kernel_info_t &k) const {
   assert(result <= MAX_CTA_PER_SHADER);
   if (result < 1) {
     printf(
-        "GPGPU-Sim uArch: ERROR ** Kernel requires more resources than shader "
+        "GPGPU-Sim uArch: ERROR ** Kernel requires more resources than "
+        "shader "
         "has.\n");
     if (gpgpu_ignore_resources_limitation) {
       printf(
@@ -4124,8 +4231,8 @@ void shader_core_ctx::cache_invalidate() { m_ldst_unit->invalidate(); }
 // modifiers
 std::list<opndcoll_rfu_t::op_t> opndcoll_rfu_t::arbiter_t::allocate_reads() {
   std::list<op_t>
-      result;  // a list of registers that (a) are in different register banks,
-               // (b) do not go to the same operand collector
+      result;  // a list of registers that (a) are in different register
+               // banks, (b) do not go to the same operand collector
 
   int input;
   int output;
@@ -4177,8 +4284,9 @@ std::list<opndcoll_rfu_t::op_t> opndcoll_rfu_t::arbiter_t::allocate_reads() {
         // Grant!
         _inmatch[input] = output;
         _outmatch[output] = input;
-        // printf("Register File: granting bank %d to OC %d, schedid %d, warpid
-        // %d, Regid %d\n", input, output, (m_queue[input].front()).get_sid(),
+        // printf("Register File: granting bank %d to OC %d, schedid %d,
+        // warpid %d, Regid %d\n", input, output,
+        // (m_queue[input].front()).get_sid(),
         // (m_queue[input].front()).get_wid(),
         // (m_queue[input].front()).get_reg());
       }
@@ -4311,7 +4419,8 @@ void barrier_set_t::warp_reaches_barrier(unsigned cta_id, unsigned warp_id,
       }
     }
   } else {
-    // TODO: check on the hardware if the count should include warp that exited
+    // TODO: check on the hardware if the count should include warp that
+    // exited
     if ((at_barrier.count() * m_warp_size) == bar_count) {
       // required number of warps have reached barrier, so release waiting
       // warps...
@@ -4326,8 +4435,8 @@ void barrier_set_t::warp_reaches_barrier(unsigned cta_id, unsigned warp_id,
 
 // warp reaches exit
 void barrier_set_t::warp_exit(unsigned warp_id) {
-  // caller needs to verify all threads in warp are done, e.g., by checking PDOM
-  // stack to see it has only one entry during exit_impl()
+  // caller needs to verify all threads in warp are done, e.g., by checking
+  // PDOM stack to see it has only one entry during exit_impl()
   m_warp_active.reset(warp_id);
 
   // test for barrier release
@@ -4419,7 +4528,8 @@ bool shader_core_ctx::warp_waiting_at_mem_barrier(unsigned warp_id) {
       // Invalidate L1 cache
       // Based on Nvidia Doc, at MEM barrier, we have to
       //(1) wait for all pending writes till they are acked
-      //(2) invalidate L1 cache to ensure coherence and avoid reading stall data
+      //(2) invalidate L1 cache to ensure coherence and avoid reading stall
+      // data
       cache_invalidate();
       // TO DO: you need to stall the SM for 5k cycles.
     }
@@ -4517,7 +4627,7 @@ bool shd_warp_t::hardware_done() const {
   return functional_done() && stores_done() && !inst_in_pipeline();
 }
 
-bool shd_warp_t::waiting() {
+bool shd_warp_t::waiting() const {
   if (functional_done()) {
     // waiting to be initialized with a kernel
     return true;
@@ -4578,8 +4688,8 @@ void shd_warp_t::print_ibuffer(FILE *fout) const {
 
 void opndcoll_rfu_t::add_cu_set(unsigned set_id, unsigned num_cu,
                                 unsigned num_dispatch) {
-  m_cus[set_id].reserve(num_cu);  // this is necessary to stop pointers in m_cu
-                                  // from being invalid do to a resize;
+  m_cus[set_id].reserve(num_cu);  // this is necessary to stop pointers in
+                                  // m_cu from being invalid do to a resize;
   for (unsigned i = 0; i < num_cu; i++) {
     m_cus[set_id].push_back(std::make_shared<collector_unit_t>());
     m_cu.push_back(m_cus[set_id].back());
@@ -4739,8 +4849,8 @@ void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
         }
         if (allocated) break;  // cu has been allocated, no need to search more.
       }
-      break;  // can only service a single input, if it failed it will fail for
-              // others.
+      break;  // can only service a single input, if it failed it will fail
+              // for others.
     }
   }
 }
@@ -5047,8 +5157,8 @@ void simt_core_cluster::icnt_inject_request_packet(class mem_fetch *mf) {
 
   // The packet size varies depending on the type of request:
   // - For write request and atomic request, the packet contains the data
-  // - For read request (i.e. not write nor atomic), the packet only has control
-  // metadata
+  // - For read request (i.e. not write nor atomic), the packet only has
+  // control metadata
   unsigned int packet_size = mf->size();
   if (!mf->get_is_write() && !mf->isatomic()) {
     packet_size = mf->get_ctrl_size();
