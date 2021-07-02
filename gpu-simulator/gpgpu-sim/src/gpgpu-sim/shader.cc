@@ -4733,12 +4733,12 @@ int register_bank(int regnum, int wid, unsigned num_banks,
                   unsigned banks_per_sched, unsigned sched_id) {
   int bank = regnum;
   if (bank_warp_shift) bank += wid;
-  if (sub_core_model) {
-    unsigned bank_num = (bank % banks_per_sched) + (sched_id * banks_per_sched);
-    assert(bank_num < num_banks);
-    return bank_num;
-  } else
-    return bank % num_banks;
+  // if (sub_core_model) {
+  //   unsigned bank_num = (bank % banks_per_sched) + (sched_id * banks_per_sched);
+  //   assert(bank_num < num_banks);
+  //   return bank_num;
+  // } else
+  return bank % num_banks;
 }
 
 bool opndcoll_rfu_t::writeback(warp_inst_t &inst) {
