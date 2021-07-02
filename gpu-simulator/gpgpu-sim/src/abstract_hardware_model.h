@@ -1329,10 +1329,11 @@ class register_set {
   bool has_free(bool sub_core_model, unsigned reg_id) {
     // in subcore model, each sched has a one specific reg to use (based on
     // sched id)
-    if (!sub_core_model) return has_free();
+    // if (!sub_core_model) 
+    return has_free();
 
-    assert(reg_id < regs.size());
-    return regs[reg_id]->empty();
+    // assert(reg_id < regs.size());
+    // return regs[reg_id]->empty();
   }
   bool has_ready() {
     for (unsigned i = 0; i < regs.size(); i++) {
@@ -1410,14 +1411,15 @@ class register_set {
   warp_inst_t **get_free(bool sub_core_model, unsigned reg_id) {
     // in subcore model, each sched has a one specific reg to use (based on
     // sched id)
-    if (!sub_core_model) return get_free();
+    // if (!sub_core_model) 
+    return get_free();
 
-    assert(reg_id < regs.size());
-    if (regs[reg_id]->empty()) {
-      return &regs[reg_id];
-    }
-    assert(0 && "No free register found");
-    return NULL;
+    // assert(reg_id < regs.size());
+    // if (regs[reg_id]->empty()) {
+    //   return &regs[reg_id];
+    // }
+    // assert(0 && "No free register found");
+    // return NULL;
   }
 
   unsigned get_size() { return regs.size(); }
