@@ -121,7 +121,7 @@ void RFWithCache::signal_schedulers(unsigned last_wid, unsigned new_wid) {
 
 void RFWithCache::allocate_cu(unsigned port_num) {
   m_rfcache_stats.inc_oc_alloc();  // count total oc allocations
-  input_port_t &inp = m_in_ports[port_num];
+  in_port_t &inp = m_in_ports[port_num];
   sort_next_input_port(
       port_num,
       inp);  // first we should sort inst in the input port
@@ -188,17 +188,25 @@ void RFWithCache::allocate_cu(unsigned port_num) {
 }
 
 void RFWithCache::sort_next_input_port(unsigned port_num,
-                                       const input_port_t &inp) {
+                                       in_port_t &inp) {
   std::list<std::pair<warp_inst_t **, register_set *>>
       temp;             // temp list of ready insts in the input latches
                         // and target out ports
   if (port_num == 0) {  // only do sorting for port 0, other ports are replicas
     auto warps_in_ocs = m_oc_allocator.get_warps_in_ocs();
-    unsigned reg_set_num = 0;
+
     for (auto in_reg_set : inp.m_in) {
-      auto out_reg_set = inp.m_out[reg_set_num];
+      if(in_reg_set->get_name() != pipeline_stage_name_decode[0]) {
+        assert(in_reg_set->is_empty());
+      } else {
+        assert (pipeline_stage_name_decode[0] == "ID_OC_SP");
+      }
+       //auto out_reg_set = inp.m_out[reg_set_num];
       while (warp_inst_t **next_ready_inst = in_reg_set->get_next_ready()) {
-        auto ready_outp = std::make_pair(next_ready_inst, out_reg_set);
+        auto exec_unit_dst = (*next_ready_inst)->get_exec_unit_dst();
+        auto &out_port = inp.m_out;
+        
+        auto ready_outp = std::make_pair(next_ready_inst, out_port[exec_unit_dst]);
         temp.push_back(ready_outp);
         auto wid = (*next_ready_inst)->warp_id();
         if (m_pending_insts_in_latch.find(wid) !=
@@ -208,7 +216,6 @@ void RFWithCache::sort_next_input_port(unsigned port_num,
           m_pending_insts_in_latch[wid] = 1;
       }
       assert(in_reg_set->traversed_all_regs());
-      reg_set_num++;
     }
     // temp has list of ready insts
     // now we should sort them

@@ -74,16 +74,6 @@
 
 class gpgpu_context;
 
-enum exec_unit_type_t {
-  NONE = 0,
-  SP = 1,
-  SFU = 2,
-  MEM = 3,
-  DP = 4,
-  INT = 5,
-  TENSOR = 6,
-  SPECIALIZED = 7
-};
 
 class thread_ctx_t {
  public:
@@ -2351,6 +2341,11 @@ class shader_core_ctx : public core_t {
   virtual void issue_warp(register_set &warp, const warp_inst_t *pI,
                           const active_mask_t &active_mask, unsigned warp_id,
                           unsigned sch_id);
+  public:
+  protected:
+  void issue_warp(register_set &warp, const warp_inst_t *pI,
+                          const active_mask_t &active_mask, unsigned warp_id,
+                          unsigned sch_id, std::string dst);
 
   void create_front_pipeline();
   void create_schedulers();

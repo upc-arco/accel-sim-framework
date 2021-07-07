@@ -268,7 +268,7 @@ void shader_core_ctx::create_exec_pipeline() {
   enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS };
 
   opndcoll_rfu_t::port_vector_t in_ports;
-  opndcoll_rfu_t::port_vector_t out_ports;
+  RFWithCache::out_port_vec_t out_ports;
   opndcoll_rfu_t::uint_vector_t cu_sets;
 
   // configure generic collectors
@@ -281,27 +281,27 @@ void shader_core_ctx::create_exec_pipeline() {
     in_ports.push_back(&m_pipeline_reg[ID_OC_SP]);
     in_ports.push_back(&m_pipeline_reg[ID_OC_SFU]);
     in_ports.push_back(&m_pipeline_reg[ID_OC_MEM]);
-    out_ports.push_back(&m_pipeline_reg[OC_EX_SP]);
-    out_ports.push_back(&m_pipeline_reg[OC_EX_SFU]);
-    out_ports.push_back(&m_pipeline_reg[OC_EX_MEM]);
+
+    out_ports["SP"] = &m_pipeline_reg[OC_EX_SP];
+    out_ports["SFU"] = &m_pipeline_reg[OC_EX_SFU];
+    out_ports["MEM"] = &m_pipeline_reg[OC_EX_MEM];
     if (m_config->gpgpu_tensor_core_avail) {
       in_ports.push_back(&m_pipeline_reg[ID_OC_TENSOR_CORE]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_TENSOR_CORE]);
+      out_ports["TENSOR"] = &m_pipeline_reg[OC_EX_TENSOR_CORE];
     }
     if (m_config->gpgpu_num_dp_units > 0) {
       in_ports.push_back(&m_pipeline_reg[ID_OC_DP]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_DP]);
+      out_ports["DP"] = &m_pipeline_reg[OC_EX_DP];
     }
     if (m_config->gpgpu_num_int_units > 0) {
       in_ports.push_back(&m_pipeline_reg[ID_OC_INT]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_INT]);
+      out_ports["INT"] = &m_pipeline_reg[OC_EX_INT];
     }
     if (m_config->m_specialized_unit.size() > 0) {
       for (unsigned j = 0; j < m_config->m_specialized_unit.size(); ++j) {
         in_ports.push_back(
             &m_pipeline_reg[m_config->m_specialized_unit[j].ID_OC_SPEC_ID]);
-        out_ports.push_back(
-            &m_pipeline_reg[m_config->m_specialized_unit[j].OC_EX_SPEC_ID]);
+        out_ports["SPEC_" + m_config->m_specialized_unit[j].OC_EX_SPEC_ID] = &m_pipeline_reg[m_config->m_specialized_unit[j].OC_EX_SPEC_ID];
       }
     }
     cu_sets.push_back((unsigned)GEN_CUS);
@@ -309,87 +309,87 @@ void shader_core_ctx::create_exec_pipeline() {
     in_ports.clear(), out_ports.clear(), cu_sets.clear();
   }
 
-  if (m_config->enable_specialized_operand_collector) {
-    m_operand_collector.add_cu_set(
-        SP_CUS, m_config->gpgpu_operand_collector_num_units_sp,
-        m_config->gpgpu_operand_collector_num_out_ports_sp);
-    m_operand_collector.add_cu_set(
-        DP_CUS, m_config->gpgpu_operand_collector_num_units_dp,
-        m_config->gpgpu_operand_collector_num_out_ports_dp);
-    m_operand_collector.add_cu_set(
-        TENSOR_CORE_CUS,
-        m_config->gpgpu_operand_collector_num_units_tensor_core,
-        m_config->gpgpu_operand_collector_num_out_ports_tensor_core);
-    m_operand_collector.add_cu_set(
-        SFU_CUS, m_config->gpgpu_operand_collector_num_units_sfu,
-        m_config->gpgpu_operand_collector_num_out_ports_sfu);
-    m_operand_collector.add_cu_set(
-        MEM_CUS, m_config->gpgpu_operand_collector_num_units_mem,
-        m_config->gpgpu_operand_collector_num_out_ports_mem);
-    m_operand_collector.add_cu_set(
-        INT_CUS, m_config->gpgpu_operand_collector_num_units_int,
-        m_config->gpgpu_operand_collector_num_out_ports_int);
+  // if (m_config->enable_specialized_operand_collector) {
+  //   m_operand_collector.add_cu_set(
+  //       SP_CUS, m_config->gpgpu_operand_collector_num_units_sp,
+  //       m_config->gpgpu_operand_collector_num_out_ports_sp);
+  //   m_operand_collector.add_cu_set(
+  //       DP_CUS, m_config->gpgpu_operand_collector_num_units_dp,
+  //       m_config->gpgpu_operand_collector_num_out_ports_dp);
+  //   m_operand_collector.add_cu_set(
+  //       TENSOR_CORE_CUS,
+  //       m_config->gpgpu_operand_collector_num_units_tensor_core,
+  //       m_config->gpgpu_operand_collector_num_out_ports_tensor_core);
+  //   m_operand_collector.add_cu_set(
+  //       SFU_CUS, m_config->gpgpu_operand_collector_num_units_sfu,
+  //       m_config->gpgpu_operand_collector_num_out_ports_sfu);
+  //   m_operand_collector.add_cu_set(
+  //       MEM_CUS, m_config->gpgpu_operand_collector_num_units_mem,
+  //       m_config->gpgpu_operand_collector_num_out_ports_mem);
+  //   m_operand_collector.add_cu_set(
+  //       INT_CUS, m_config->gpgpu_operand_collector_num_units_int,
+  //       m_config->gpgpu_operand_collector_num_out_ports_int);
 
-    for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_sp;
-         i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_SP]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_SP]);
-      cu_sets.push_back((unsigned)SP_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
+  //   for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_sp;
+  //        i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_SP]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_SP]);
+  //     cu_sets.push_back((unsigned)SP_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
 
-    for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_dp;
-         i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_DP]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_DP]);
-      cu_sets.push_back((unsigned)DP_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
+  //   for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_dp;
+  //        i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_DP]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_DP]);
+  //     cu_sets.push_back((unsigned)DP_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
 
-    for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_sfu;
-         i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_SFU]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_SFU]);
-      cu_sets.push_back((unsigned)SFU_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
+  //   for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_sfu;
+  //        i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_SFU]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_SFU]);
+  //     cu_sets.push_back((unsigned)SFU_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
 
-    for (unsigned i = 0;
-         i < m_config->gpgpu_operand_collector_num_in_ports_tensor_core; i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_TENSOR_CORE]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_TENSOR_CORE]);
-      cu_sets.push_back((unsigned)TENSOR_CORE_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
+  //   for (unsigned i = 0;
+  //        i < m_config->gpgpu_operand_collector_num_in_ports_tensor_core; i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_TENSOR_CORE]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_TENSOR_CORE]);
+  //     cu_sets.push_back((unsigned)TENSOR_CORE_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
 
-    for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_mem;
-         i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_MEM]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_MEM]);
-      cu_sets.push_back((unsigned)MEM_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
+  //   for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_mem;
+  //        i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_MEM]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_MEM]);
+  //     cu_sets.push_back((unsigned)MEM_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
 
-    for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_int;
-         i++) {
-      in_ports.push_back(&m_pipeline_reg[ID_OC_INT]);
-      out_ports.push_back(&m_pipeline_reg[OC_EX_INT]);
-      cu_sets.push_back((unsigned)INT_CUS);
-      cu_sets.push_back((unsigned)GEN_CUS);
-      m_operand_collector.add_port(in_ports, out_ports, cu_sets);
-      in_ports.clear(), out_ports.clear(), cu_sets.clear();
-    }
-  }
+  //   for (unsigned i = 0; i < m_config->gpgpu_operand_collector_num_in_ports_int;
+  //        i++) {
+  //     in_ports.push_back(&m_pipeline_reg[ID_OC_INT]);
+  //     out_ports.push_back(&m_pipeline_reg[OC_EX_INT]);
+  //     cu_sets.push_back((unsigned)INT_CUS);
+  //     cu_sets.push_back((unsigned)GEN_CUS);
+  //     m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //     in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  //   }
+  // }
 
   m_operand_collector.init(m_config->gpgpu_num_reg_banks,
                            m_config->gpgpu_num_sched_per_core, &schedulers,
@@ -1028,6 +1028,41 @@ void exec_shader_core_ctx::func_exec_inst(warp_inst_t &inst) {
     inst.generate_mem_accesses();
     // inst.print_m_accessq();
   }
+}
+
+void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
+                                 const warp_inst_t *next_inst,
+                                 const active_mask_t &active_mask,
+                                 unsigned warp_id, unsigned sch_id,
+                                 std::string dst) {
+  warp_inst_t **pipe_reg =
+      pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
+  assert(pipe_reg);
+  m_warp[warp_id]->ibuffer_free();
+
+  assert(next_inst->valid());
+  **pipe_reg = *next_inst;  // static instruction information
+  (*pipe_reg)->issue(active_mask, warp_id,
+                     m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
+                     m_warp[warp_id]->get_dynamic_warp_id(),
+                     sch_id);  // dynamic instruction information
+  (*pipe_reg)->set_exe_pipe_dest(dst); // set destination reg in the instruction
+  m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
+  func_exec_inst(**pipe_reg);
+
+  if (next_inst->op == BARRIER_OP) {
+    m_warp[warp_id]->store_info_of_last_inst_at_barrier(*pipe_reg);
+    m_barriers.warp_reaches_barrier(m_warp[warp_id]->get_cta_id(), warp_id,
+                                    const_cast<warp_inst_t *>(next_inst));
+
+  } else if (next_inst->op == MEMORY_BARRIER_OP) {
+    m_warp[warp_id]->set_membar();
+  }
+
+  updateSIMTStack(warp_id, *pipe_reg);
+
+  m_scoreboard->reserveRegisters(*pipe_reg);
+  m_warp[warp_id]->set_next_pc(next_inst->pc + next_inst->isize);
 }
 
 void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
@@ -1721,7 +1756,7 @@ void SGTOCTOScheduler::issue(unsigned broadcaster_schid, unsigned wid,
       scheduler->issue(broadcaster_schid, wid, issued_index);
       scheduler->delete_from_priority_list(wid, issued_index);
     }
-    //assert(check_all_priority_lists_are_identical());
+    // assert(check_all_priority_lists_are_identical());
   }
 }
 
@@ -1788,7 +1823,7 @@ void SGTOCTOScheduler::order_func() {
   m_next_cycle_prioritized_warps = temp;
   assert(m_next_cycle_prioritized_warps.size() == m_supervised_warps.size());
 
-  //assert(check_next_cycle_prioritized_list());
+  // assert(check_next_cycle_prioritized_list());
 }
 
 void SGTOCTOScheduler::order_warps() {
@@ -1819,13 +1854,13 @@ void SGTOCTOScheduler::do_on_warp_issued(
   auto issued_wid = m_next_cycle_prioritized_warps[issued_index]->get_warp_id();
   assert(warp_id == issued_wid);
 
-  //assert(check_all_priority_lists_are_identical());
-  //assert(check_next_cycle_prioritized_list());
+  // assert(check_all_priority_lists_are_identical());
+  // assert(check_next_cycle_prioritized_list());
 
   scheduler_unit::do_on_warp_issued(warp_id, num_issued, prioritized_iter);
 
-  //assert(check_all_priority_lists_are_identical());
-  //assert(check_next_cycle_prioritized_list());
+  // assert(check_all_priority_lists_are_identical());
+  // assert(check_next_cycle_prioritized_list());
   issued_index = prioritized_iter - m_next_cycle_prioritized_warps.begin();
   assert(m_next_cycle_prioritized_warps[issued_index]);
   issued_wid = m_next_cycle_prioritized_warps[issued_index]->get_warp_id();
@@ -1833,8 +1868,8 @@ void SGTOCTOScheduler::do_on_warp_issued(
 
   issue(get_schd_id(), warp_id, issued_index);
 
-  //assert(check_all_priority_lists_are_identical());
-  //assert(check_next_cycle_prioritized_list());
+  // assert(check_all_priority_lists_are_identical());
+  // assert(check_next_cycle_prioritized_list());
 }
 
 void SGTOCTOScheduler::cycle() {
@@ -1854,8 +1889,8 @@ void SGTOCTOScheduler::cycle() {
   unsigned issue_candidate_wid = -1;
   order_warps();
 
-  //assert(check_all_priority_lists_are_identical());
-  //assert(check_next_cycle_prioritized_list());
+  // assert(check_all_priority_lists_are_identical());
+  // assert(check_next_cycle_prioritized_list());
 
   std::vector<shd_warp_t *>::const_iterator iter =
       m_next_cycle_prioritized_warps.begin();
@@ -1882,8 +1917,8 @@ void SGTOCTOScheduler::cycle() {
            (checked < max_issue) && (checked <= issued) &&
            (issued < max_issue)) {
       assert(!(warp(warp_id).waiting()));
-      //assert(check_all_priority_lists_are_identical());
-      //assert(check_next_cycle_prioritized_list());
+      // assert(check_all_priority_lists_are_identical());
+      // assert(check_next_cycle_prioritized_list());
       const warp_inst_t *pI = warp(warp_id).ibuffer_next_inst();
       // Jin: handle cdp latency;
       if (pI && pI->m_is_cdp && warp(warp_id).m_cdp_latency > 0) {
@@ -1926,21 +1961,23 @@ void SGTOCTOScheduler::cycle() {
               }
             }
 
-            //assert(check_all_priority_lists_are_identical());
-            //assert(check_next_cycle_prioritized_list());
+            // assert(check_all_priority_lists_are_identical());
+            // assert(check_next_cycle_prioritized_list());
 
             if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
                 (pI->op == TENSOR_CORE_LOAD_OP) ||
                 (pI->op == TENSOR_CORE_STORE_OP)) {
-              if (m_mem_out->has_free(m_shader->m_config->sub_core_model,
-                                      m_id) &&
+              if (m_sp_out->has_free(
+                      m_shader->m_config
+                          ->sub_core_model,  // redirect everything to sp_out
+                      m_id) &&
                   (!diff_exec_units ||
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
-                m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
-                                     m_id);
-                //assert(check_all_priority_lists_are_identical());
-                //assert(check_next_cycle_prioritized_list());
+                m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
+                                     m_id, "MEM");
+                // assert(check_all_priority_lists_are_identical());
+                // assert(check_next_cycle_prioritized_list());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1949,20 +1986,23 @@ void SGTOCTOScheduler::cycle() {
             } else {
               bool sp_pipe_avail =
                   (m_shader->m_config->gpgpu_num_sp_units > 0) &&
-                  m_sp_out->has_free(m_shader->m_config->sub_core_model, m_id);
+                  m_sp_out->has_free(m_shader->m_config->sub_core_model,
+                                     m_id);  // redirect everything to sp_out
               bool sfu_pipe_avail =
                   (m_shader->m_config->gpgpu_num_sfu_units > 0) &&
-                  m_sfu_out->has_free(m_shader->m_config->sub_core_model, m_id);
+                  m_sp_out->has_free(m_shader->m_config->sub_core_model, m_id);
               bool tensor_core_pipe_avail =
                   (m_shader->m_config->gpgpu_num_tensor_core_units > 0) &&
-                  m_tensor_core_out->has_free(
-                      m_shader->m_config->sub_core_model, m_id);
+                  m_sp_out->has_free(m_shader->m_config->sub_core_model,
+                                     m_id);  // redirect everything to sp_out
               bool dp_pipe_avail =
                   (m_shader->m_config->gpgpu_num_dp_units > 0) &&
-                  m_dp_out->has_free(m_shader->m_config->sub_core_model, m_id);
+                  m_sp_out->has_free(m_shader->m_config->sub_core_model,
+                                     m_id);  // redirect everything to sp_out
               bool int_pipe_avail =
                   (m_shader->m_config->gpgpu_num_int_units > 0) &&
-                  m_int_out->has_free(m_shader->m_config->sub_core_model, m_id);
+                  m_sp_out->has_free(m_shader->m_config->sub_core_model,
+                                     m_id);  // redirect everything to sp_out
 
               // This code need to be refactored
               if (pI->op != TENSOR_CORE_OP && pI->op != SFU_OP &&
@@ -2013,23 +2053,23 @@ void SGTOCTOScheduler::cycle() {
                 }
 
                 if (execute_on_SP) {
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
-                                       m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                                       m_id, "SP");
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
                   previous_issued_inst_exec_type = exec_unit_type_t::SP;
                 } else if (execute_on_INT) {
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
-                  m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
-                                       m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
+                  m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
+                                       m_id, "INT");
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2040,10 +2080,10 @@ void SGTOCTOScheduler::cycle() {
                          !(diff_exec_units && previous_issued_inst_exec_type ==
                                                   exec_unit_type_t::DP)) {
                 if (dp_pipe_avail) {
-                  m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
-                                       m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
+                                       m_id, "DP");
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2057,10 +2097,10 @@ void SGTOCTOScheduler::cycle() {
                        !(diff_exec_units && previous_issued_inst_exec_type ==
                                                 exec_unit_type_t::SFU)) {
                 if (sfu_pipe_avail) {
-                  m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
-                                       m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
+                                       m_id, "SFU");
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2070,10 +2110,10 @@ void SGTOCTOScheduler::cycle() {
                          !(diff_exec_units && previous_issued_inst_exec_type ==
                                                   exec_unit_type_t::TENSOR)) {
                 if (tensor_core_pipe_avail) {
-                  m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
-                                       warp_id, m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  m_shader->issue_warp(*m_sp_out, pI, active_mask,
+                                       warp_id, m_id, "TENSOR");
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2089,14 +2129,14 @@ void SGTOCTOScheduler::cycle() {
                 bool spec_pipe_avail =
                     (m_shader->m_config->m_specialized_unit[spec_id].num_units >
                      0) &&
-                    spec_reg_set->has_free(m_shader->m_config->sub_core_model,
+                    m_sp_out->has_free(m_shader->m_config->sub_core_model,
                                            m_id);
 
                 if (spec_pipe_avail) {
-                  m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
-                                       m_id);
-                  //assert(check_all_priority_lists_are_identical());
-                  //assert(check_next_cycle_prioritized_list());
+                  m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
+                                       m_id, "SPEC_" + m_shader->m_config->m_specialized_unit[spec_id].OC_EX_SPEC_ID);
+                  // assert(check_all_priority_lists_are_identical());
+                  // assert(check_next_cycle_prioritized_list());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -2113,8 +2153,8 @@ void SGTOCTOScheduler::cycle() {
         // this case can happen after a return instruction in diverged warp
         warp(warp_id).set_next_pc(pc);
         warp(warp_id).ibuffer_flush();
-        //assert(check_all_priority_lists_are_identical());
-        //assert(check_next_cycle_prioritized_list());
+        // assert(check_all_priority_lists_are_identical());
+        // assert(check_next_cycle_prioritized_list());
       }
       if (warp_inst_issued) {
         assert((issue_candidate_wid != -1) &&
@@ -2123,8 +2163,8 @@ void SGTOCTOScheduler::cycle() {
         assert(after_issued_index == -1);
         after_issued_index = iter - m_next_cycle_prioritized_warps.begin();
         do_on_warp_issued(warp_id, issued, iter);
-        //assert(check_next_cycle_prioritized_list());
-        //assert(check_all_priority_lists_are_identical());
+        // assert(check_next_cycle_prioritized_list());
+        // assert(check_all_priority_lists_are_identical());
       } else {
       }
       checked++;
@@ -2162,10 +2202,12 @@ void SGTOCTOScheduler::cycle() {
       // there was progressable old warps
       if (!old_warp_has_progressable_inst_and_insts_in_latch) {
         // among all progressable old warps none has inst in latch
-        m_rfcache_stats.inc_sched_pipeline_stalled_no_progressable_ow_wo_inst_in_latch();
+        m_rfcache_stats
+            .inc_sched_pipeline_stalled_no_progressable_ow_wo_inst_in_latch();
       } else {
         // among all progressable old warps at least one has inst in latch
-        m_rfcache_stats.inc_sched_pipeline_stalled_no_progressable_ow_w_ins_in_latch();
+        m_rfcache_stats
+            .inc_sched_pipeline_stalled_no_progressable_ow_w_ins_in_latch();
       }
     }
   } else {
@@ -2194,7 +2236,8 @@ void SGTOCTOScheduler::cycle() {
           m_rfcache_stats.inc_sched_issued_nw_progressable_ow_w_inst_in_latch();
         } else {
           // among progressable old warps so far none had instruction in latch
-          m_rfcache_stats.inc_sched_issued_nw_progressable_ow_wo_inst_in_latch();
+          m_rfcache_stats
+              .inc_sched_issued_nw_progressable_ow_wo_inst_in_latch();
         }
       } else {
         // there were no old warp that could progress so far
@@ -4734,9 +4777,8 @@ int register_bank(int regnum, int wid, unsigned num_banks,
   int bank = regnum;
   if (bank_warp_shift) bank += wid;
   // if (sub_core_model) {
-  //   unsigned bank_num = (bank % banks_per_sched) + (sched_id * banks_per_sched);
-  //   assert(bank_num < num_banks);
-  //   return bank_num;
+  //   unsigned bank_num = (bank % banks_per_sched) + (sched_id *
+  //   banks_per_sched); assert(bank_num < num_banks); return bank_num;
   // } else
   return bank % num_banks;
 }

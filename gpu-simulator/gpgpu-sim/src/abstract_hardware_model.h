@@ -67,11 +67,22 @@ enum FuncCache {
 
 enum AdaptiveCache { FIXED = 0, ADAPTIVE_VOLTA = 1 };
 
+enum exec_unit_type_t {
+  NONE = 0,
+  SP = 1,
+  SFU = 2,
+  MEM = 3,
+  DP = 4,
+  INT = 5,
+  TENSOR = 6,
+  SPECIALIZED = 7
+};
+
 #ifdef __cplusplus
 
-#include <iostream>
 #include <stdio.h>
 #include <string.h>
+#include <iostream>
 #include <set>
 
 typedef unsigned long long new_addr_type;
@@ -137,6 +148,7 @@ enum special_operations_t {
   FP_SIN_OP,
   FP_EXP_OP
 };
+
 typedef enum special_operations_t
     special_ops;  // Required to identify for the power model
 enum operation_pipeline_t {
@@ -154,6 +166,7 @@ enum mem_operation_t { NOT_TEX, TEX };
 typedef enum mem_operation_t mem_operation;
 
 enum _memory_op_t { no_memory_op = 0, memory_load, memory_store };
+
 
 #include <assert.h>
 #include <stdlib.h>
@@ -1012,6 +1025,7 @@ class warp_inst_t : public inst_t {
     m_empty = true;
     m_config = NULL;
     m_dst_oc_id = -1;
+    m_exe_pipe_dst = "";
   }
   warp_inst_t(const core_config *config) {
     m_uid = 0;
@@ -1026,21 +1040,35 @@ class warp_inst_t : public inst_t {
     m_is_cdp = 0;
     should_do_atomic = true;
     m_dst_oc_id = -1;
+    m_exe_pipe_dst = "";
   }
   virtual ~warp_inst_t() {}
 
-  void set_dst_oc_id(unsigned id) { 
-    assert(m_dst_oc_id == -1); m_dst_oc_id = id; 
+  void set_dst_oc_id(unsigned id) {
+    assert(m_dst_oc_id == -1);
+    m_dst_oc_id = id;
   }
+
+  std::string get_exec_unit_dst() const {
+    return m_exe_pipe_dst;
+  }
+
+  void set_exe_pipe_dest(std::string dst) {
+    assert(dst != "");
+    assert(m_exe_pipe_dst == "");
+    m_exe_pipe_dst = dst;
+  }
+
   unsigned get_dst_oc_id() const { return m_dst_oc_id; }
-  
+
   // modifiers
   void broadcast_barrier_reduction(const active_mask_t &access_mask);
   void do_atomic(bool forceDo = false);
   void do_atomic(const active_mask_t &access_mask, bool forceDo = false);
-  void clear() { 
-    m_empty = true; 
+  void clear() {
+    m_empty = true;
     m_dst_oc_id = -1;
+    m_exe_pipe_dst = "";
   }
 
   void issue(const active_mask_t &mask, unsigned warp_id,
@@ -1214,11 +1242,12 @@ class warp_inst_t : public inst_t {
   unsigned m_scheduler_id;  // the scheduler that issues this inst
 
   // Jin: cdp support
-  public:
-    int m_is_cdp;
+ public:
+  int m_is_cdp;
 
-  private:
-    unsigned m_dst_oc_id;
+ private:
+  unsigned m_dst_oc_id;
+  std::string m_exe_pipe_dst;
 };
 
 void move_warp(warp_inst_t *&dst, warp_inst_t *&src);
@@ -1326,10 +1355,17 @@ class register_set {
     }
     return false;
   }
+
+  bool is_empty() {
+    for (unsigned i = 0; i < regs.size(); i++) {
+      if(!(regs[i]->empty())) return false;
+    }
+    return true;
+  }
   bool has_free(bool sub_core_model, unsigned reg_id) {
     // in subcore model, each sched has a one specific reg to use (based on
     // sched id)
-    // if (!sub_core_model) 
+    // if (!sub_core_model)
     return has_free();
 
     // assert(reg_id < regs.size());
@@ -1356,7 +1392,8 @@ class register_set {
     move_warp(dest, *ready);
   }
 
-  void move_out_to_by_src_pointer(warp_inst_t *src_pointer, warp_inst_t *&dest) {
+  void move_out_to_by_src_pointer(warp_inst_t *src_pointer,
+                                  warp_inst_t *&dest) {
     move_warp(dest, src_pointer);
   }
 
@@ -1374,21 +1411,19 @@ class register_set {
     }
     return ready;
   }
-  
-  warp_inst_t ** get_next_ready() {
-    while(m_last_iter != regs.end()) {
-      if((*m_last_iter)->empty()) {
+
+  warp_inst_t **get_next_ready() {
+    while (m_last_iter != regs.end()) {
+      if ((*m_last_iter)->empty()) {
         m_last_iter++;
         continue;
-      } 
+      }
       return &(*m_last_iter++);
     }
     m_last_iter = regs.begin();
     return nullptr;
   }
-  bool traversed_all_regs() {
-    return m_last_iter == regs.begin();
-  }
+  bool traversed_all_regs() { return m_last_iter == regs.begin(); }
   void print(FILE *fp) const {
     fprintf(fp, "%s : @%p\n", m_name, this);
     for (unsigned i = 0; i < regs.size(); i++) {
@@ -1411,7 +1446,8 @@ class register_set {
   warp_inst_t **get_free(bool sub_core_model, unsigned reg_id) {
     // in subcore model, each sched has a one specific reg to use (based on
     // sched id)
-    // if (!sub_core_model) 
+    // if (!sub_core_model)
+    assert(has_free());
     return get_free();
 
     // assert(reg_id < regs.size());
@@ -1431,6 +1467,9 @@ class register_set {
       }
     }
     return false;
+  }
+  std::string get_name() const {
+    return std::string(m_name);
   }
  private:
   std::vector<warp_inst_t *> regs;
