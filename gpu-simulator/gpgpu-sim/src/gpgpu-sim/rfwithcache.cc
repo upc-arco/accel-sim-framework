@@ -142,7 +142,7 @@ void RFWithCache::allocate_cu(unsigned port_num) {
         next_ready_inst_outp.first;  //**pipeline_reg;
     register_set *next_outp =
         next_ready_inst_outp.second;  // output port for next ready instruction
-    assert(next_ready_inst && !(*next_ready_inst)->empty());
+    assert(next_ready_inst && !(*next_ready_inst)->empty() && next_outp);
     auto allocated =
         m_oc_allocator.allocate_distance_liveness(**next_ready_inst);
     if (allocated.first) {
@@ -203,9 +203,10 @@ void RFWithCache::sort_next_input_port(unsigned port_num,
       }
        //auto out_reg_set = inp.m_out[reg_set_num];
       while (warp_inst_t **next_ready_inst = in_reg_set->get_next_ready()) {
-        auto exec_unit_dst = (*next_ready_inst)->get_exec_unit_dst();
+        std::string exec_unit_dst = (*next_ready_inst)->get_exec_unit_dst().c_str();
+        assert(exec_unit_dst == "SP" || exec_unit_dst == "SFU" || exec_unit_dst == "DP" || exec_unit_dst == "TENSOR" || exec_unit_dst == "INT" || exec_unit_dst.find("SPEC_") != std::string::npos || exec_unit_dst == "MEM");
         auto &out_port = inp.m_out;
-        
+        assert(out_port[exec_unit_dst]);
         auto ready_outp = std::make_pair(next_ready_inst, out_port[exec_unit_dst]);
         temp.push_back(ready_outp);
         auto wid = (*next_ready_inst)->warp_id();
@@ -654,6 +655,7 @@ RFWithCache::modified_collector_unit_t::RFCache::RFCache(
 bool RFWithCache::modified_collector_unit_t::allocate(
     warp_inst_t **inst_in_inp_reg, register_set *output_reg_set) {
   DDDPRINTF("New OC Allocation")
+  assert(output_reg_set);
   // warp_inst_t **pipeline_reg = pipeline_reg_set->get_ready();
   assert(inst_in_inp_reg && !(*inst_in_inp_reg)->empty());
   // warp_inst_t &inst = **pipeline_reg;

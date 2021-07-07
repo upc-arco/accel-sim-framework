@@ -31,6 +31,7 @@
 #include <float.h>
 #include <limits.h>
 #include <string.h>
+#include <string_view>
 #include <iostream>
 #include "../../libcuda/gpgpu_context.h"
 #include "../cuda-sim/cuda-sim.h"
@@ -301,7 +302,9 @@ void shader_core_ctx::create_exec_pipeline() {
       for (unsigned j = 0; j < m_config->m_specialized_unit.size(); ++j) {
         in_ports.push_back(
             &m_pipeline_reg[m_config->m_specialized_unit[j].ID_OC_SPEC_ID]);
-        out_ports["SPEC_" + m_config->m_specialized_unit[j].OC_EX_SPEC_ID] = &m_pipeline_reg[m_config->m_specialized_unit[j].OC_EX_SPEC_ID];
+        std::string spec_name = "SPEC_";
+        spec_name += m_config->m_specialized_unit[j].OC_EX_SPEC_ID;
+        out_ports[spec_name] = &m_pipeline_reg[m_config->m_specialized_unit[j].OC_EX_SPEC_ID];
       }
     }
     cu_sets.push_back((unsigned)GEN_CUS);
@@ -1034,7 +1037,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id,
-                                 std::string dst) {
+                                 const std::string dst) {
   warp_inst_t **pipe_reg =
       pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
@@ -1887,6 +1890,7 @@ void SGTOCTOScheduler::cycle() {
               // inst in latch
 
   unsigned issue_candidate_wid = -1;
+
   order_warps();
 
   // assert(check_all_priority_lists_are_identical());
@@ -2133,8 +2137,11 @@ void SGTOCTOScheduler::cycle() {
                                            m_id);
 
                 if (spec_pipe_avail) {
+                  std::string exec_pipeline_dst = "SPEC_";
+                  exec_pipeline_dst += m_shader->m_config->m_specialized_unit[spec_id].OC_EX_SPEC_ID;
+                  
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
-                                       m_id, "SPEC_" + m_shader->m_config->m_specialized_unit[spec_id].OC_EX_SPEC_ID);
+                                       m_id, exec_pipeline_dst);
                   // assert(check_all_priority_lists_are_identical());
                   // assert(check_next_cycle_prioritized_list());
                   issued++;

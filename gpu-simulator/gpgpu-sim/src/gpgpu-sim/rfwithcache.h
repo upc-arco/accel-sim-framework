@@ -44,6 +44,9 @@ class RFWithCache : public opndcoll_rfu_t {
         : m_in(input), m_out(output), m_cu_sets(cu_sets) {
       //assert(input.size() == output.size());
       assert(not m_cu_sets.empty());
+      for(auto outp : m_out) {
+        assert(outp.second);
+      }
     }
     // private:
     port_vector_t m_in;

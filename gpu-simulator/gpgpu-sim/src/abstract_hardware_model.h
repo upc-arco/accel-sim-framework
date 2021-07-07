@@ -1050,11 +1050,12 @@ class warp_inst_t : public inst_t {
   }
 
   std::string get_exec_unit_dst() const {
+    assert(m_exe_pipe_dst == "SP" || m_exe_pipe_dst == "SFU" || m_exe_pipe_dst == "DP" || m_exe_pipe_dst == "MEM" || m_exe_pipe_dst == "INT" || m_exe_pipe_dst == "TENSOR" || m_exe_pipe_dst.find("SPEC_") != std::string::npos);
     return m_exe_pipe_dst;
   }
 
-  void set_exe_pipe_dest(std::string dst) {
-    assert(dst != "");
+  void set_exe_pipe_dest(const std::string &dst) {
+    assert(dst == "SP" || dst == "SFU" || dst == "DP" || dst == "MEM" || dst == "INT" || dst == "TENSOR" || dst.find("SPEC_") != std::string::npos);
     assert(m_exe_pipe_dst == "");
     m_exe_pipe_dst = dst;
   }

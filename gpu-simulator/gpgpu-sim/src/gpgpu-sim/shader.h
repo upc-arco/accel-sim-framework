@@ -43,6 +43,7 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <string_view>
 //#include "../cuda-sim/ptx.tab.h"
 
 #include "../abstract_hardware_model.h"
@@ -2345,7 +2346,7 @@ class shader_core_ctx : public core_t {
   protected:
   void issue_warp(register_set &warp, const warp_inst_t *pI,
                           const active_mask_t &active_mask, unsigned warp_id,
-                          unsigned sch_id, std::string dst);
+                          unsigned sch_id, const std::string dst);
 
   void create_front_pipeline();
   void create_schedulers();
